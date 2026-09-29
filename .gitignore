@@ -1,0 +1,11 @@
+# personal data created at runtime
+config.json
+captures/
+logs/
+
+# build output (exe files are published as GitHub Release assets)
+dist/
+build/
+*.spec
+__pycache__/
+*.pyc

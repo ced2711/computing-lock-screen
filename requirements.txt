@@ -1,0 +1,2 @@
+# No required dependencies. Optional, for camera detection only:
+opencv-python-headless>=4.8,<5
