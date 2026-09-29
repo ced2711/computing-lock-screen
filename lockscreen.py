@@ -1,35 +1,44 @@
 """
-Computing Lock Screen (Windows)
+Computing Lock Screen (Windows / Linux)
 
 Lock your screen while long jobs (vibe coding / training / builds) keep running
 in the background. Optional camera, keyboard and mouse activity detection.
 
-No required dependencies (keyboard/mouse use native Windows hooks).
+No required dependencies. Windows uses native low-level hooks for keyboard/mouse;
+Linux (X11) grabs keyboard and pointer through Tk, like xscreensaver / i3lock do.
 Camera detection is optional: pip install "opencv-python-headless<5"
 """
 
 import ctypes
-import ctypes.wintypes as wt
 import datetime as dt
 import hashlib
 import importlib.util
 import json
 import os
 import queue
+import re
 import secrets
+import shutil
+import subprocess
 import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import font as tkfont, messagebox, ttk
 
+IS_WIN = sys.platform == "win32"
+IS_WAYLAND = not IS_WIN and (os.environ.get("XDG_SESSION_TYPE") == "wayland"
+                             or bool(os.environ.get("WAYLAND_DISPLAY")))
 HAS_CV2 = importlib.util.find_spec("cv2") is not None  # imported lazily, only when the camera is used
 
 APP_DIR = os.path.dirname(os.path.abspath(sys.argv[0]))
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 CAPTURE_DIR = os.path.join(APP_DIR, "captures")
 LOG_DIR = os.path.join(APP_DIR, "logs")
+# Linux families are resolved to the first installed one in pick_fonts()
 UI_FONT = "Segoe UI"
+MONO_FONT = "Consolas"
+PWD_CHAR = "●" if IS_WIN else "•"
 
 # ---------------------------------------------------------------- strings
 
@@ -50,6 +59,10 @@ STRINGS = {
         "cam_face": "Also detect faces", "cam_snap": "Save snapshots to captures/ on detection",
         "sec_input": "Keyboard / Mouse", "kb": "Detect key presses", "ms": "Detect mouse movement / clicks",
         "block": "Block Win key, Alt+Tab, Alt+Esc, Alt+F4",
+        "block_linux": "Block system shortcuts (grabs keyboard and mouse)",
+        "cam_missing_bin": "This build has no camera support; use ComputingLock-Camera",
+        "wayland": "Wayland session: shortcuts cannot be blocked and input is only seen while the\n"
+                   "lock window has focus. Log in with an X11 session for full protection.",
         "sec_other": "Other", "awake": "Prevent system sleep (recommended, keeps jobs running)",
         "display": "Keep display on", "beep": "Beep when activity is detected",
         "quit": "Quit", "lock": "🔒 Lock screen",
@@ -89,6 +102,10 @@ STRINGS = {
         "cam_face": "同时检测人脸", "cam_snap": "检测到时保存快照到 captures/",
         "sec_input": "键盘 / 鼠标", "kb": "检测键盘按键", "ms": "检测鼠标移动 / 点击",
         "block": "拦截 Win 键、Alt+Tab、Alt+Esc、Alt+F4",
+        "block_linux": "拦截系统快捷键（独占键盘和鼠标）",
+        "cam_missing_bin": "此版本不含摄像头功能，请使用 ComputingLock-Camera",
+        "wayland": "当前是 Wayland 会话：无法拦截系统快捷键，且只有锁屏窗口获得焦点时才能检测键鼠。\n"
+                   "需要完整保护请用 X11 会话登录。",
         "sec_other": "其他", "awake": "阻止系统睡眠（推荐，保证任务不中断）",
         "display": "保持屏幕常亮", "beep": "检测到活动时发出提示音",
         "quit": "退出", "lock": "🔒 开始锁屏",
@@ -118,8 +135,14 @@ LANG_NAMES = {"en": "English", "zh": "中文"}
 _lang = "en"
 
 
+# Tk on Linux renders through Xft, which crashes (X BadLength) on color-emoji fonts before libXft 2.3.5
+_EMOJI = re.compile("[\U0001F300-\U0001FAFF⌨⚠]️? ?")
+
+
 def T(key, *args):
     s = STRINGS[_lang][key]
+    if not IS_WIN:
+        s = _EMOJI.sub("", s)
     return s.format(*args) if args else s
 
 
@@ -171,6 +194,8 @@ def hash_password(pwd, salt_hex):
 
 
 def set_dpi_aware():
+    if not IS_WIN:
+        return  # X11 Tk scales from the X server's DPI on its own
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except Exception:
@@ -180,8 +205,22 @@ def set_dpi_aware():
             pass
 
 
-def virtual_screen():
+def pick_fonts(root):
+    """Segoe UI / Consolas do not exist on Linux: use the first installed look-alike."""
+    global UI_FONT, MONO_FONT
+    if IS_WIN:
+        return
+    have = set(tkfont.families(root))
+    UI_FONT = next((f for f in ("Noto Sans", "Ubuntu", "Cantarell", "DejaVu Sans", "Liberation Sans")
+                    if f in have), "TkDefaultFont")
+    MONO_FONT = next((f for f in ("DejaVu Sans Mono", "Noto Sans Mono", "Ubuntu Mono", "Liberation Mono")
+                      if f in have), "TkFixedFont")
+
+
+def virtual_screen(win):
     """Return (x, y, w, h) covering all monitors."""
+    if not IS_WIN:
+        return 0, 0, win.winfo_screenwidth(), win.winfo_screenheight()  # one X screen spans them all
     try:
         u = ctypes.windll.user32
         return (u.GetSystemMetrics(76), u.GetSystemMetrics(77),
@@ -190,11 +229,62 @@ def virtual_screen():
         return None
 
 
+def primary_monitor(win):
+    """Return (x, y, w, h) of the primary monitor, in screen coordinates."""
+    if not IS_WIN:
+        try:
+            out = subprocess.run(["xrandr", "--current"], capture_output=True, text=True, timeout=3).stdout
+            m = (re.search(r"^\S+ connected primary (\d+)x(\d+)\+(\d+)\+(\d+)", out, re.M)
+                 or re.search(r"^\S+ connected (\d+)x(\d+)\+(\d+)\+(\d+)", out, re.M))
+            if m:
+                w, h, x, y = map(int, m.groups())
+                return x, y, w, h
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return 0, 0, win.winfo_screenwidth(), win.winfo_screenheight()
+
+
+_inhibitor = None
+
+
 def set_keep_awake(system, display):
+    """Windows: thread execution state. Linux: a systemd-inhibit lock held for the session."""
+    global _inhibitor
+    if IS_WIN:
+        try:
+            flags = 0x80000000 | (0x1 if system else 0) | (0x2 if display else 0)
+            ctypes.windll.kernel32.SetThreadExecutionState(flags)
+        except Exception:
+            pass
+        return
+    if _inhibitor:
+        try:
+            os.killpg(_inhibitor.pid, 15)
+        except OSError:
+            pass
+        _inhibitor = None
+    what = ":".join(w for w, on in (("sleep", system), ("idle", display)) if on)
+    exe = shutil.which("systemd-inhibit")
+    if not (what and exe):
+        return
     try:
-        flags = 0x80000000 | (0x1 if system else 0) | (0x2 if display else 0)
-        ctypes.windll.kernel32.SetThreadExecutionState(flags)
-    except Exception:
+        # the held command exits with us, so a crash never leaves the lock behind
+        _inhibitor = subprocess.Popen(
+            [exe, "--what=" + what, "--who=Computing Lock Screen", "--why=Long-running jobs",
+             "--mode=block", "tail", f"--pid={os.getpid()}", "-f", "/dev/null"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True)
+    except OSError:
+        pass
+
+
+def open_path(path):
+    try:
+        if IS_WIN:
+            os.startfile(path)
+        else:
+            subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
         pass
 
 
@@ -236,11 +326,14 @@ def schedule_cleanup(cfg, snaps):
         exe = sys.executable
         w = os.path.join(os.path.dirname(exe), "pythonw.exe")
         cmd = [w if os.path.exists(w) else exe, os.path.abspath(__file__)]
+    if IS_WIN:
+        detach = dict(creationflags=0x00000008 | 0x08000000)  # DETACHED_PROCESS | CREATE_NO_WINDOW
+    else:
+        detach = dict(start_new_session=True, stdin=subprocess.DEVNULL,
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        import subprocess
         subprocess.Popen(cmd + ["--cleanup-at", str(time.time() + hours * 3600 + 60)],
-                         creationflags=0x00000008 | 0x08000000,  # DETACHED_PROCESS | CREATE_NO_WINDOW
-                         close_fds=True, cwd=APP_DIR)
+                         close_fds=True, cwd=APP_DIR, **detach)
     except Exception:
         pass
 
@@ -284,7 +377,7 @@ class CameraMonitor(threading.Thread):
 
     def run(self):
         cv2 = self.cv2
-        cap = cv2.VideoCapture(int(self.cfg["camera_index"]), cv2.CAP_DSHOW)
+        cap = cv2.VideoCapture(int(self.cfg["camera_index"]), cv2.CAP_DSHOW if IS_WIN else cv2.CAP_ANY)
         if not cap.isOpened():
             self.events.put(("error", T("cam_fail")))
             return
@@ -346,25 +439,52 @@ class CameraMonitor(threading.Thread):
         self.stop_flag.set()
 
 
-class KBDLLHOOKSTRUCT(ctypes.Structure):
-    _fields_ = [("vkCode", wt.DWORD), ("scanCode", wt.DWORD), ("flags", wt.DWORD),
-                ("time", wt.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+class InputReporter:
+    """Counts keyboard / mouse activity and reports it at most once per 3 seconds."""
+
+    def __init__(self, cfg, events):
+        self.cfg, self.events = cfg, events
+        self.last_kb = self.last_mouse = 0.0
+        self.kb_count = self.mouse_count = 0
+
+    def _on_key(self, blocked=False):
+        if not self.cfg["keyboard_enabled"]:
+            return
+        self.kb_count += 1
+        now = time.time()
+        if now - self.last_kb > 3:  # throttle: at most one report per 3 seconds
+            self.last_kb = now
+            self.events.put(("keyboard", T("key") + (T("key_blocked") if blocked else "")))
+
+    def _mouse_event(self, key):
+        self.mouse_count += 1
+        now = time.time()
+        if now - self.last_mouse > 3:
+            self.last_mouse = now
+            self.events.put(("mouse", T("mouse") + T(key)))
 
 
-LRESULT = ctypes.c_ssize_t
-HOOKPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_int, wt.WPARAM, wt.LPARAM)
-_user32 = ctypes.WinDLL("user32", use_last_error=True)
-_user32.SetWindowsHookExW.argtypes = (ctypes.c_int, HOOKPROC, wt.HINSTANCE, wt.DWORD)
-_user32.SetWindowsHookExW.restype = wt.HHOOK
-_user32.CallNextHookEx.argtypes = (wt.HHOOK, ctypes.c_int, wt.WPARAM, wt.LPARAM)
-_user32.CallNextHookEx.restype = LRESULT
-_user32.UnhookWindowsHookEx.argtypes = (wt.HHOOK,)
-_user32.PostThreadMessageW.argtypes = (wt.DWORD, wt.UINT, wt.WPARAM, wt.LPARAM)
-ctypes.windll.kernel32.GetModuleHandleW.restype = wt.HMODULE
+if IS_WIN:
+    import ctypes.wintypes as wt
+
+    class KBDLLHOOKSTRUCT(ctypes.Structure):
+        _fields_ = [("vkCode", wt.DWORD), ("scanCode", wt.DWORD), ("flags", wt.DWORD),
+                    ("time", wt.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+    LRESULT = ctypes.c_ssize_t
+    HOOKPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_int, wt.WPARAM, wt.LPARAM)
+    _user32 = ctypes.WinDLL("user32", use_last_error=True)
+    _user32.SetWindowsHookExW.argtypes = (ctypes.c_int, HOOKPROC, wt.HINSTANCE, wt.DWORD)
+    _user32.SetWindowsHookExW.restype = wt.HHOOK
+    _user32.CallNextHookEx.argtypes = (wt.HHOOK, ctypes.c_int, wt.WPARAM, wt.LPARAM)
+    _user32.CallNextHookEx.restype = LRESULT
+    _user32.UnhookWindowsHookEx.argtypes = (wt.HHOOK,)
+    _user32.PostThreadMessageW.argtypes = (wt.DWORD, wt.UINT, wt.WPARAM, wt.LPARAM)
+    ctypes.windll.kernel32.GetModuleHandleW.restype = wt.HMODULE
 
 
-class InputMonitor(threading.Thread):
-    """Native low-level keyboard / mouse hooks; can block system shortcuts."""
+class InputMonitor(InputReporter, threading.Thread):
+    """Windows: native low-level keyboard / mouse hooks; can block system shortcuts."""
 
     WH_KEYBOARD_LL, WH_MOUSE_LL, WM_QUIT = 13, 14, 0x0012
     WM_KEYDOWN, WM_SYSKEYDOWN = 0x0100, 0x0104
@@ -374,10 +494,8 @@ class InputMonitor(threading.Thread):
     LLKHF_ALTDOWN = 0x20
 
     def __init__(self, cfg, events):
-        super().__init__(daemon=True)
-        self.cfg, self.events = cfg, events
-        self.last_kb = self.last_mouse = 0.0
-        self.kb_count = self.mouse_count = 0
+        InputReporter.__init__(self, cfg, events)
+        threading.Thread.__init__(self, daemon=True)
         self.tid = None
         # keep references so the callbacks are not garbage-collected
         self._kb_proc = HOOKPROC(self._kb_hook)
@@ -417,15 +535,6 @@ class InputMonitor(threading.Thread):
                 return 1  # swallow the key
         return _user32.CallNextHookEx(None, code, wparam, lparam)
 
-    def _on_key(self, blocked=False):
-        if not self.cfg["keyboard_enabled"]:
-            return
-        self.kb_count += 1
-        now = time.time()
-        if now - self.last_kb > 3:  # throttle: at most one report per 3 seconds
-            self.last_kb = now
-            self.events.put(("keyboard", T("key") + (T("key_blocked") if blocked else "")))
-
     # --- mouse
     def _ms_hook(self, code, wparam, lparam):
         if code == 0:
@@ -437,12 +546,58 @@ class InputMonitor(threading.Thread):
                 self._mouse_event("scrolled")
         return _user32.CallNextHookEx(None, code, wparam, lparam)
 
-    def _mouse_event(self, key):
-        self.mouse_count += 1
-        now = time.time()
-        if now - self.last_mouse > 3:
-            self.last_mouse = now
-            self.events.put(("mouse", T("mouse") + T(key)))
+
+class TkInputMonitor(InputReporter):
+    """Linux: the lock window covers every monitor, so its own Tk events are the activity.
+    With block_shortcuts it also holds a global keyboard + pointer grab (as xscreensaver and
+    i3lock do), so the window manager never sees Super, Alt+Tab, Alt+F4, ... Wayland
+    compositors do not honour X grabs, and Ctrl+Alt+F<n> is handled by the kernel."""
+
+    SUPER_KEYS = {"Super_L", "Super_R", "Meta_L", "Meta_R", "Hyper_L", "Hyper_R"}
+    ALT_KEYS = {"Tab", "ISO_Left_Tab", "Escape", "F4"}
+    ALT_MASK = 0x8  # Mod1
+
+    def __init__(self, cfg, events, win):
+        super().__init__(cfg, events)
+        self.win = win
+        self.stopped = False
+
+    def start(self):
+        w = self.win  # bindings on a toplevel also fire for all of its child widgets
+        w.bind("<KeyPress>", self._key, add="+")
+        w.bind("<Motion>", lambda e: self._mouse("moved"), add="+")
+        w.bind("<ButtonPress>", self._button, add="+")
+        w.bind("<MouseWheel>", lambda e: self._mouse("scrolled"), add="+")  # Tk 8.7+ wheel
+        if self.cfg["block_shortcuts"]:
+            self._grab()
+
+    def _grab(self):
+        if self.stopped:
+            return
+        try:
+            self.win.grab_set_global()
+        except tk.TclError:  # not viewable yet, or another client holds a grab: retry
+            self.win.after(250, self._grab)
+
+    def stop(self):
+        self.stopped = True
+        try:
+            self.win.grab_release()
+        except tk.TclError:
+            pass
+
+    def _key(self, e):
+        blocked = (self.cfg["block_shortcuts"] and not IS_WAYLAND
+                   and (e.keysym in self.SUPER_KEYS
+                        or (e.state & self.ALT_MASK and e.keysym in self.ALT_KEYS)))
+        self._on_key(blocked)
+
+    def _button(self, e):
+        self._mouse("scrolled" if e.num in (4, 5, 6, 7) else "clicked")  # X11 wheel = buttons 4-7
+
+    def _mouse(self, key):
+        if self.cfg["mouse_enabled"]:
+            self._mouse_event(key)
 
 
 # ---------------------------------------------------------------- settings window
@@ -452,7 +607,7 @@ class SettingsWindow:
         self.root, self.cfg, self.on_start = root, cfg, on_start
         root.resizable(False, False)
         try:
-            ttk.Style().theme_use("vista")
+            ttk.Style().theme_use("vista" if IS_WIN else "clam")
         except tk.TclError:
             pass
         self.build()
@@ -507,9 +662,9 @@ class SettingsWindow:
         # password
         section(T("sec_pwd"))
         self.v_pwd, self.v_pwd2 = tk.StringVar(), tk.StringVar()
-        row(T("pwd"), ttk.Entry(f, textvariable=self.v_pwd, show="●", width=38),
+        row(T("pwd"), ttk.Entry(f, textvariable=self.v_pwd, show=PWD_CHAR, width=38),
             T("pwd_reuse") if cfg["pwd_hash"] else "")
-        row(T("pwd2"), ttk.Entry(f, textvariable=self.v_pwd2, show="●", width=38))
+        row(T("pwd2"), ttk.Entry(f, textvariable=self.v_pwd2, show=PWD_CHAR, width=38))
 
         # camera
         section(T("sec_cam"))
@@ -521,7 +676,8 @@ class SettingsWindow:
         self.v_snap = tk.BooleanVar(value=cfg["save_snapshots"])
         check(T("cam_enable"), self.v_cam, HAS_CV2)
         if not HAS_CV2:
-            missing = "cam_missing_exe" if getattr(sys, "frozen", False) else "cam_missing"
+            missing = (("cam_missing_exe" if IS_WIN else "cam_missing_bin")
+                       if getattr(sys, "frozen", False) else "cam_missing")
             ttk.Label(f, text=T(missing), foreground="#c33").grid(
                 row=r, column=0, columnspan=3, sticky="w"); r += 1
         row(T("cam_index"), ttk.Spinbox(f, from_=0, to=5, textvariable=self.v_cam_idx, width=8), T("cam_index_hint"))
@@ -550,7 +706,10 @@ class SettingsWindow:
         self.v_block = tk.BooleanVar(value=cfg["block_shortcuts"])
         check(T("kb"), self.v_kb)
         check(T("ms"), self.v_ms)
-        check(T("block"), self.v_block)
+        check(T("block" if IS_WIN else "block_linux"), self.v_block)
+        if IS_WAYLAND:
+            ttk.Label(f, text=T("wayland"), foreground="#c33").grid(
+                row=r, column=0, columnspan=3, sticky="w"); r += 1
 
         # other
         section(T("sec_other"))
@@ -571,7 +730,7 @@ class SettingsWindow:
 
     def open_snapshots(self):
         os.makedirs(CAPTURE_DIR, exist_ok=True)
-        os.startfile(CAPTURE_DIR)
+        open_path(CAPTURE_DIR)
 
     def delete_all(self):
         n = len(list_snapshots())
@@ -646,13 +805,14 @@ class LockScreen:
         self.fail_count = 0
         self.angle = 0
         self.alert_until = 0.0
+        self.last_idle_reset = 0.0
         self.closed = False
 
         self.win = tk.Toplevel(root)
         w = self.win
         w.configure(bg=BG, cursor="none")
         w.overrideredirect(True)
-        vs = virtual_screen()
+        self.vs = vs = virtual_screen(w)
         if vs:
             x, y, sw, sh = vs
             w.geometry(f"{sw}x{sh}+{x}+{y}")
@@ -669,7 +829,7 @@ class LockScreen:
         if cfg["keep_awake"] or cfg["keep_display_on"]:
             set_keep_awake(cfg["keep_awake"], cfg["keep_display_on"])
 
-        self.inputs = InputMonitor(cfg, self.events)
+        self.inputs = InputMonitor(cfg, self.events) if IS_WIN else TkInputMonitor(cfg, self.events, w)
         self.inputs.start()
         self.camera = None
         if cfg["camera_enabled"] and HAS_CV2:
@@ -684,10 +844,10 @@ class LockScreen:
     # --- UI
     def _build_ui(self):
         w = self.win
-        # center on the primary monitor (its origin is 0,0)
-        pw, ph = w.winfo_screenwidth(), w.winfo_screenheight()
-        vs = virtual_screen()
-        ox, oy = (-vs[0], -vs[1]) if vs else (0, 0)
+        # center on the primary monitor; ox, oy = its origin relative to this window
+        px, py, pw, ph = primary_monitor(w)
+        vs = self.vs
+        ox, oy = (px - vs[0], py - vs[1]) if vs else (0, 0)
 
         center = tk.Frame(w, bg=BG)
         center.place(x=ox + pw // 2, y=oy + ph // 2, anchor="center")
@@ -704,7 +864,7 @@ class LockScreen:
         if self.cfg["note"]:
             tk.Label(center, text=self.cfg["note"], bg=BG, fg=DIM, font=(UI_FONT, 14)).pack(pady=(10, 0))
 
-        self.elapsed_lbl = tk.Label(center, text="", bg=BG, fg=DIM, font=("Consolas", 16))
+        self.elapsed_lbl = tk.Label(center, text="", bg=BG, fg=DIM, font=(MONO_FONT, 16))
         self.elapsed_lbl.pack(pady=(24, 0))
 
         mon = []
@@ -724,7 +884,7 @@ class LockScreen:
         box = tk.Frame(center, bg=BG)
         box.pack(pady=(26, 0))
         self.pwd_var = tk.StringVar()
-        self.entry = tk.Entry(box, textvariable=self.pwd_var, show="●", width=22, justify="center",
+        self.entry = tk.Entry(box, textvariable=self.pwd_var, show=PWD_CHAR, width=22, justify="center",
                               font=(UI_FONT, 16), bg="#131820", fg=FG, insertbackground=FG,
                               relief="flat", highlightthickness=1, highlightbackground="#2a3340",
                               highlightcolor=ACCENT)
@@ -736,7 +896,7 @@ class LockScreen:
         self.msg_lbl = tk.Label(center, text=T("enter_pwd"), bg=BG, fg=DIM, font=(UI_FONT, 11))
         self.msg_lbl.pack(pady=(8, 0))
 
-        self.clock_lbl = tk.Label(w, text="", bg=BG, fg=DIM, font=("Consolas", 14))
+        self.clock_lbl = tk.Label(w, text="", bg=BG, fg=DIM, font=(MONO_FONT, 14))
         self.clock_lbl.place(x=ox + pw - 24, y=oy + 20, anchor="ne")
 
         self.log_lbl = tk.Label(w, text="", bg=BG, fg=DIM, justify="left", anchor="sw",
@@ -754,6 +914,12 @@ class LockScreen:
         now = time.time()
         if now > self.alert_until and self.alert_lbl.cget("text"):
             self.alert_lbl.config(text="")
+        if not IS_WIN and self.cfg["keep_display_on"] and now - self.last_idle_reset > 30:
+            self.last_idle_reset = now
+            try:
+                self.win.tk.call("tk", "inactive", "reset")  # XResetScreenSaver: keeps X11 blanking away
+            except tk.TclError:
+                pass
         self.win.after(1000, self._tick)
 
     def _spin(self):
@@ -795,8 +961,11 @@ class LockScreen:
         self.alert_until = time.time() + 6
         if self.cfg["beep_on_alert"]:
             try:
-                import winsound
-                winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+                if IS_WIN:
+                    import winsound
+                    winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+                else:
+                    self.win.bell()
             except Exception:
                 pass
 
@@ -864,7 +1033,7 @@ def show_summary(root, s):
     ttk.Label(f, text=T("sum_dur", s["duration"]), font=(UI_FONT, 13, "bold")).pack(anchor="w")
     ttk.Label(f, text=T("sum_counts", s["keyboard"], s["mouse"], s["camera"], s["password"])).pack(
         anchor="w", pady=(4, 10))
-    txt = tk.Text(f, width=70, height=16, font=("Consolas", 10))
+    txt = tk.Text(f, width=70, height=16, font=(MONO_FONT, 10))
     txt.insert("1.0", "\n".join(s["log"]))
     txt.config(state="disabled")
     txt.pack(fill="both", expand=True)
@@ -875,9 +1044,9 @@ def show_summary(root, s):
     b = ttk.Frame(f)
     b.pack(fill="x", pady=(10, 0))
     if os.path.isdir(CAPTURE_DIR):
-        ttk.Button(b, text=T("open_snaps"), command=lambda: os.startfile(CAPTURE_DIR)).pack(side="left")
+        ttk.Button(b, text=T("open_snaps"), command=lambda: open_path(CAPTURE_DIR)).pack(side="left")
     if s["log_path"]:
-        ttk.Button(b, text=T("open_log"), command=lambda: os.startfile(s["log_path"])).pack(side="left", padx=8)
+        ttk.Button(b, text=T("open_log"), command=lambda: open_path(s["log_path"])).pack(side="left", padx=8)
     ttk.Button(b, text=T("close"), command=root.destroy).pack(side="right")
     win.protocol("WM_DELETE_WINDOW", root.destroy)
 
@@ -892,8 +1061,13 @@ def main():
     cfg = load_config()
     cleanup_expired(cfg)  # catch anything whose background cleaner was killed by a restart
     root = tk.Tk()
+    pick_fonts(root)
+    res_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     try:
-        root.iconbitmap(default=os.path.join(getattr(sys, "_MEIPASS", APP_DIR), "icon.ico"))
+        if IS_WIN:
+            root.iconbitmap(default=os.path.join(res_dir, "icon.ico"))
+        else:
+            root.iconphoto(True, tk.PhotoImage(file=os.path.join(res_dir, "icon.png")))
     except tk.TclError:
         pass
 
