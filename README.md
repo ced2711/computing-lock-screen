@@ -1,8 +1,8 @@
 # Computing Lock Screen
 
 A lock screen for Windows and Linux for when you step away while long jobs run (vibe coding, training, builds):
-a full-screen **"COMPUTING · DO NOT TOUCH"** display, background programs keep running, and a
-password unlocks it. Optional camera, keyboard and mouse activity detection. English / 中文.
+a calm, full-screen **"This computer is running a job"** notice that tells passers-by not to touch it
+and that activity is recorded, while background programs keep running; a password unlocks it. Optional camera, keyboard and mouse activity detection. English / 中文.
 
 ![Lock screen](docs/screenshot.png)
 
@@ -25,6 +25,8 @@ Built on Ubuntu 22.04, so it runs on distros with glibc 2.35 or newer.
 
 ## Features
 
+- Looks like a system screen, not a toy: plain instructions, a quiet progress bar, how long the job has
+  run, and a notice that activity is monitored and recorded. Touching it only shows "Activity recorded at …"
 - Custom title / subtitle / note; covers all monitors and stays on top
 - Password unlock (PBKDF2 hash stored in `config.json`); wrong attempts are logged but never lock you out
 - Camera detection: camera index, check interval (seconds), sensitivity, face detection;

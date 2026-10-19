@@ -39,13 +39,16 @@ LOG_DIR = os.path.join(APP_DIR, "logs")
 # Linux families are resolved to the first installed one in pick_fonts()
 UI_FONT = "Segoe UI"
 MONO_FONT = "Consolas"
+DISPLAY_FONT = TEXT_FONT = "Segoe UI"  # lock screen; Segoe UI Variable when installed (Windows 11)
 PWD_CHAR = "●" if IS_WIN else "•"
 
 # ---------------------------------------------------------------- strings
 
 STRINGS = {
     "en": {
-        "subtitle": "DO NOT TOUCH  ·  Tasks in progress",
+        "title_default": "This computer is running a job",
+        "subtitle": "Don't use the keyboard or mouse, and don't turn off or unplug this computer. "
+                    "Interrupting it can lose hours of work.",
         "settings_title": "Computing Lock Screen — Settings",
         "sec_text": "Lock screen text", "title": "Title", "subtitle_lbl": "Subtitle",
         "note": "Note (optional)", "note_hint": "e.g. Back in ~2 hours", "language": "Language",
@@ -74,10 +77,14 @@ STRINGS = {
         "changed": "{:.1f}% of image changed", "faces": "{} face(s) detected", "camera": "Camera: ",
         "key": "Keyboard: key press detected", "key_blocked": " (system shortcut blocked)",
         "mouse": "Mouse: ", "moved": "moved", "clicked": "clicked", "scrolled": "scrolled",
-        "started": "Lock screen started", "mon_cam": "📷 Camera (every {:g}s)", "mon_kb": "⌨ Keyboard",
-        "mon_ms": "🖱 Mouse", "monitoring": "Monitoring:  ", "unlock": "Unlock",
-        "enter_pwd": "Enter password to unlock", "running": "Running  ",
-        "activity": "⚠ Activity detected · ",
+        "started": "Lock screen started",
+        "mon_cam": "Activity on this computer is monitored and recorded, including camera images.",
+        "mon_input": "Keyboard and mouse activity on this computer is monitored and recorded.",
+        "recorded": "Activity recorded at {}.", "owner": "Owner sign-in",
+        "running_for": "Running for {}", "lt_min": "less than a minute", "min": "{} min", "h_min": "{} h {} min",
+        "weekdays": "Monday Tuesday Wednesday Thursday Friday Saturday Sunday",
+        "months": "January February March April May June July August September October November December",
+        "day_fmt": "{}, {} {}",
         "keep_hours": "Auto-delete after (h)", "keep_hint": "Hours after the session ends; 0 = keep forever",
         "snap_count": "{} snapshot(s) in captures/", "delete_all": "Delete all",
         "delete_confirm": "Permanently delete all {} snapshot(s)?",
@@ -89,7 +96,8 @@ STRINGS = {
         "open_snaps": "Open snapshots folder", "open_log": "Open log", "close": "Close",
     },
     "zh": {
-        "subtitle": "DO NOT TOUCH  ·  程序运行中，请勿触碰",
+        "title_default": "这台电脑正在运行任务",
+        "subtitle": "请勿使用键盘或鼠标，也不要关机或拔掉电源。中断会导致数小时的工作丢失。",
         "settings_title": "Computing Lock Screen — 设置",
         "sec_text": "锁屏显示", "title": "主标题", "subtitle_lbl": "副标题",
         "note": "备注（可选）", "note_hint": "例如：预计 2 小时后结束", "language": "语言",
@@ -117,10 +125,14 @@ STRINGS = {
         "changed": "画面变化 {:.1f}%", "faces": "检测到 {} 张人脸", "camera": "摄像头：",
         "key": "键盘：检测到按键", "key_blocked": "（已拦截系统快捷键）",
         "mouse": "鼠标：", "moved": "移动", "clicked": "点击", "scrolled": "滚轮",
-        "started": "锁屏已启动", "mon_cam": "📷 摄像头（每 {:g}s）", "mon_kb": "⌨ 键盘",
-        "mon_ms": "🖱 鼠标", "monitoring": "监测中：", "unlock": "解锁",
-        "enter_pwd": "输入密码解锁", "running": "已运行  ",
-        "activity": "⚠ 检测到活动 · ",
+        "started": "锁屏已启动",
+        "mon_cam": "本机的活动正在被监控和记录，包括摄像头画面。",
+        "mon_input": "本机的键盘和鼠标活动正在被监控和记录。",
+        "recorded": "已记录 {} 的活动。", "owner": "所有者解锁",
+        "running_for": "已运行 {}", "lt_min": "不到 1 分钟", "min": "{} 分钟", "h_min": "{} 小时 {} 分钟",
+        "weekdays": "星期一 星期二 星期三 星期四 星期五 星期六 星期日",
+        "months": "1 2 3 4 5 6 7 8 9 10 11 12",
+        "day_fmt": "{2}月{1}日 {0}",
         "keep_hours": "自动删除（小时）", "keep_hint": "锁屏结束后多少小时删除；0 = 永久保留",
         "snap_count": "captures/ 中有 {} 张快照", "delete_all": "全部删除",
         "delete_confirm": "确定永久删除全部 {} 张快照吗？",
@@ -149,7 +161,7 @@ def T(key, *args):
 
 DEFAULT_CONFIG = {
     "language": "en",
-    "title": "COMPUTING",
+    "title": STRINGS["en"]["title_default"],
     "subtitle": STRINGS["en"]["subtitle"],
     "note": "",
     "camera_enabled": False,
@@ -169,6 +181,8 @@ DEFAULT_CONFIG = {
     "pwd_hash": "",
 }
 
+OLD_SUBTITLES = ("DO NOT TOUCH  ·  Tasks in progress", "DO NOT TOUCH  ·  程序运行中，请勿触碰")
+
 # ---------------------------------------------------------------- helpers
 
 def load_config():
@@ -178,6 +192,12 @@ def load_config():
             cfg.update(json.load(f))
     except (OSError, ValueError):
         pass
+    # 1.x defaults: move untouched ones to the new wording
+    lang = cfg["language"] if cfg["language"] in STRINGS else "en"
+    if cfg["title"] == "COMPUTING":
+        cfg["title"] = STRINGS[lang]["title_default"]
+    if cfg["subtitle"] in OLD_SUBTITLES:
+        cfg["subtitle"] = STRINGS[lang]["subtitle"]
     return cfg
 
 
@@ -208,14 +228,17 @@ def set_dpi_aware():
 
 def pick_fonts(root):
     """Segoe UI / Consolas do not exist on Linux: use the first installed look-alike."""
-    global UI_FONT, MONO_FONT
-    if IS_WIN:
-        return
+    global UI_FONT, MONO_FONT, DISPLAY_FONT, TEXT_FONT
     have = set(tkfont.families(root))
+    if IS_WIN:
+        if "Segoe UI Variable Display" in have:
+            DISPLAY_FONT, TEXT_FONT = "Segoe UI Variable Display", "Segoe UI Variable Text"
+        return
     UI_FONT = next((f for f in ("Noto Sans", "Ubuntu", "Cantarell", "DejaVu Sans", "Liberation Sans")
                     if f in have), "TkDefaultFont")
     MONO_FONT = next((f for f in ("DejaVu Sans Mono", "Noto Sans Mono", "Ubuntu Mono", "Liberation Mono")
                       if f in have), "TkFixedFont")
+    DISPLAY_FONT = TEXT_FONT = UI_FONT
 
 
 def virtual_screen(win):
@@ -776,7 +799,7 @@ class SettingsWindow:
             messagebox.showwarning(T("settings"), T("cam_nan"))
             return False
         self.cfg.update(
-            title=self.v_title.get().strip() or "COMPUTING",
+            title=self.v_title.get().strip() or T("title_default"),
             subtitle=self.v_sub.get().strip(),
             note=self.v_note.get().strip(),
             camera_enabled=self.v_cam.get(), camera_index=idx,
@@ -793,9 +816,10 @@ class SettingsWindow:
         new = next(k for k, v in LANG_NAMES.items() if v == self.v_lang.get())
         if new == self.cfg["language"] or not self.collect():
             return
-        # swap the subtitle too if it is still the other language's default
-        if self.cfg["subtitle"] == STRINGS[self.cfg["language"]]["subtitle"]:
-            self.cfg["subtitle"] = STRINGS[new]["subtitle"]
+        # swap the title and subtitle too if they are still the other language's defaults
+        for key, default in (("title", "title_default"), ("subtitle", "subtitle")):
+            if self.cfg[key] == STRINGS[self.cfg["language"]][default]:
+                self.cfg[key] = STRINGS[new][default]
         self.cfg["language"] = new
         save_config(self.cfg)
         self.build()
@@ -818,7 +842,20 @@ class SettingsWindow:
 
 # ---------------------------------------------------------------- lock screen
 
-BG, FG, DIM, ACCENT, ALERT = "#07090d", "#e8ecf1", "#5b6573", "#35d07f", "#ff4d4f"
+# a calm, system-style notice: navy screen, plain wording, nothing that reacts playfully to poking
+BG, FG, DIM, TRACK, FIELD, FIELD_LINE, ALERT = (
+    "#0e2a47", "#ffffff", "#a9bdd3", "#24476d", "#123354", "#3a5b80", "#ffb4a8")
+
+
+def fmt_elapsed(sec):
+    m = int(sec) // 60
+    if m < 1:
+        return T("lt_min")
+    return T("h_min", m // 60, m % 60) if m >= 60 else T("min", m)
+
+
+def fmt_day(d):
+    return T("day_fmt", T("weekdays").split()[d.weekday()], d.day, T("months").split()[d.month - 1])
 
 
 class LockScreen:
@@ -829,8 +866,9 @@ class LockScreen:
         self.counts = {"keyboard": 0, "mouse": 0, "camera": 0, "password": 0}
         self.start_time = time.time()
         self.fail_count = 0
-        self.angle = 0
+        self.bar_pos = 0.0
         self.alert_until = 0.0
+        self.msg_until = 0.0
         self.last_idle_reset = 0.0
         self.closed = False
 
@@ -863,83 +901,123 @@ class LockScreen:
             self.camera.start()
 
         self._tick()
-        self._spin()
+        self._animate()
         self._poll_events()
         self._keep_on_top()
 
     # --- UI
     def _build_ui(self):
         w = self.win
-        # center on the primary monitor; ox, oy = its origin relative to this window
+        # lay out on the primary monitor; ox, oy = its origin relative to this window
         px, py, pw, ph = primary_monitor(w)
         vs = self.vs
         ox, oy = (px - vs[0], py - vs[1]) if vs else (0, 0)
+        s = max(0.6, ph / 1000)  # designed at 1000 px tall
 
-        center = tk.Frame(w, bg=BG)
-        center.place(x=ox + pw // 2, y=oy + ph // 2, anchor="center")
+        def sz(n):
+            return int(round(n * s))
 
-        self.canvas = tk.Canvas(center, width=120, height=120, bg=BG, highlightthickness=0)
-        self.canvas.pack(pady=(0, 20))
-        self.canvas.create_oval(10, 10, 110, 110, outline="#1c232d", width=6)
-        self.arc = self.canvas.create_arc(10, 10, 110, 110, start=0, extent=90,
-                                          style="arc", outline=ACCENT, width=6)
+        def font(family, size):
+            return (family, -sz(size))
 
-        tk.Label(center, text=self.cfg["title"], bg=BG, fg=FG, font=(UI_FONT, 64, "bold")).pack()
-        tk.Label(center, text=self.cfg["subtitle"], bg=BG, fg=ALERT,
-                 font=(UI_FONT, 22, "bold")).pack(pady=(4, 0))
-        if self.cfg["note"]:
-            tk.Label(center, text=self.cfg["note"], bg=BG, fg=DIM, font=(UI_FONT, 14)).pack(pady=(10, 0))
+        sw = vs[2] if vs else w.winfo_screenwidth()
+        sh = vs[3] if vs else w.winfo_screenheight()
+        c = self.canvas = tk.Canvas(w, width=sw, height=sh, bg=BG, highlightthickness=0)
+        c.place(x=0, y=0)
 
-        self.elapsed_lbl = tk.Label(center, text="", bg=BG, fg=DIM, font=(MONO_FONT, 16))
-        self.elapsed_lbl.pack(pady=(24, 0))
+        x = ox + max(sz(64), int(pw * 0.125))
+        text_w = min(pw - (x - ox) - sz(64), sz(1000))
 
-        mon = []
-        if self.cfg["camera_enabled"] and HAS_CV2:
-            mon.append(T("mon_cam", self.cfg["camera_interval"]))
-        if self.cfg["keyboard_enabled"]:
-            mon.append(T("mon_kb"))
-        if self.cfg["mouse_enabled"]:
-            mon.append(T("mon_ms"))
-        tk.Label(center, text=(T("monitoring") + "   ".join(mon)) if mon else "", bg=BG, fg=DIM,
-                 font=(UI_FONT, 11)).pack(pady=(6, 0))
+        def below(item, gap):
+            return c.bbox(item)[3] + sz(gap)
 
-        self.alert_lbl = tk.Label(center, text="", bg=BG, fg=ALERT, font=(UI_FONT, 14, "bold"))
-        self.alert_lbl.pack(pady=(18, 0))
+        # padlock: shackle over a body with a keyhole
+        lw = max(2, sz(4))
+        c.create_arc(x + sz(10), 0, x + sz(50), sz(40), start=0, extent=180,
+                     style="arc", outline=FG, width=lw, tags="content")
+        for sx in (x + sz(10), x + sz(50)):
+            c.create_line(sx, sz(20), sx, sz(34), fill=FG, width=lw, tags="content")
+        lock = c.create_rectangle(x, sz(34), x + sz(60), sz(76), outline=FG, width=lw, tags="content")
+        c.create_oval(x + sz(25), sz(50), x + sz(35), sz(60), fill=FG, width=0, tags="content")
 
-        # password box
-        box = tk.Frame(center, bg=BG)
-        box.pack(pady=(26, 0))
+        title = c.create_text(x - sz(3), below(lock, 52), text=self.cfg["title"], fill=FG, anchor="nw",
+                              width=pw - (x - ox) - sz(64), font=font(DISPLAY_FONT, 58), tags="content")
+        last = title
+        if self.cfg["subtitle"]:
+            last = c.create_text(x, below(title, 30), text=self.cfg["subtitle"], fill=DIM, anchor="nw",
+                                 width=text_w, font=font(TEXT_FONT, 24), tags="content")
+
+        # indeterminate progress: the job runs, there is nothing here to click
+        bar_y, bar_h = below(last, 56), max(2, sz(4))
+        self.bar_x, self.bar_w, self.seg_w = x, min(sz(760), text_w), sz(180)
+        c.create_rectangle(x, bar_y, x + self.bar_w, bar_y + bar_h, fill=TRACK, width=0, tags="content")
+        self.seg = c.create_rectangle(x, bar_y, x, bar_y + bar_h, fill=FG, width=0, tags="content")
+
+        self.status = c.create_text(x, bar_y + sz(36), text=self._status_text(), fill=FG, anchor="nw",
+                                    width=text_w, font=font(TEXT_FONT, 22), tags="content")
+
+        self.mon_text = self._monitor_text()
+        mon_y, mon_x = below(self.status, 70), x
+        if self.cfg["camera_enabled"] and HAS_CV2:  # small video-camera glyph
+            gy, gw = mon_y + sz(5), max(1, sz(2))
+            c.create_rectangle(x, gy, x + sz(17), gy + sz(13), outline=DIM, width=gw, tags="content")
+            c.create_polygon(x + sz(19), gy + sz(6), x + sz(24), gy + sz(2), x + sz(24), gy + sz(11),
+                             outline=DIM, fill="", width=gw, tags="content")
+            mon_x = x + sz(36)
+        self.mon = c.create_text(mon_x, mon_y, text=self.mon_text, fill=DIM, anchor="nw",
+                                 width=text_w - (mon_x - x), font=font(TEXT_FONT, 20), tags="content")
+
+        # center the block vertically, a little above the middle
+        _, top, _, bottom = c.bbox("content")
+        c.move("content", 0, oy + int(ph * 0.46) - (top + bottom) // 2)
+
+        # bottom row: owner sign-in on the left, date and time on the right
+        base = oy + ph - sz(64)
+        label = c.create_text(ox + sz(60), base, text=T("owner"), fill=DIM, anchor="w",
+                              font=font(TEXT_FONT, 16))
         self.pwd_var = tk.StringVar()
-        self.entry = tk.Entry(box, textvariable=self.pwd_var, show=PWD_CHAR, width=22, justify="center",
-                              font=(UI_FONT, 16), bg="#131820", fg=FG, insertbackground=FG,
-                              relief="flat", highlightthickness=1, highlightbackground="#2a3340",
-                              highlightcolor=ACCENT)
-        self.entry.pack(side="left", ipady=6)
+        self.entry = tk.Entry(w, textvariable=self.pwd_var, show=PWD_CHAR, width=18,
+                              font=font(TEXT_FONT, 17), bg=FIELD, fg=FG, insertbackground=FG,
+                              relief="flat", highlightthickness=1, highlightbackground=FIELD_LINE,
+                              highlightcolor=DIM)
         self.entry.bind("<Return>", lambda e: self.try_unlock())
-        tk.Button(box, text=T("unlock"), command=self.try_unlock, font=(UI_FONT, 12),
-                  bg="#1c2530", fg=FG, activebackground=ACCENT, relief="flat",
-                  padx=16, cursor="hand2").pack(side="left", padx=(8, 0), ipady=4)
-        self.msg_lbl = tk.Label(center, text=T("enter_pwd"), bg=BG, fg=DIM, font=(UI_FONT, 11))
-        self.msg_lbl.pack(pady=(8, 0))
-
-        self.clock_lbl = tk.Label(w, text="", bg=BG, fg=DIM, font=(MONO_FONT, 14))
-        self.clock_lbl.place(x=ox + pw - 24, y=oy + 20, anchor="ne")
-
-        self.log_lbl = tk.Label(w, text="", bg=BG, fg=DIM, justify="left", anchor="sw",
-                                font=(UI_FONT, 10))
-        self.log_lbl.place(x=ox + 24, y=oy + ph - 20, anchor="sw")
+        entry_x = c.bbox(label)[2] + sz(20)
+        c.create_window(entry_x, base, window=self.entry, anchor="w")
+        self.msg = c.create_text(entry_x + self.entry.winfo_reqwidth() + sz(16), base, text="",
+                                 fill=ALERT, anchor="w", font=font(TEXT_FONT, 16))
+        self.clock = c.create_text(ox + pw - sz(60), base + sz(20), text="", fill=FG, anchor="se",
+                                   font=font(DISPLAY_FONT, 40))
+        self.date = c.create_text(ox + pw - sz(60), base - sz(36), text="", fill=DIM, anchor="se",
+                                  font=font(TEXT_FONT, 18))
 
         self.entry.focus_force()
+
+    def _status_text(self):
+        parts = [T("running_for", fmt_elapsed(time.time() - self.start_time))]
+        if self.cfg["note"]:
+            parts.append(self.cfg["note"])
+        return "   ·   ".join(parts)
+
+    def _monitor_text(self):
+        if self.cfg["camera_enabled"] and HAS_CV2:
+            return T("mon_cam")
+        if self.cfg["keyboard_enabled"] or self.cfg["mouse_enabled"]:
+            return T("mon_input")
+        return ""
 
     # --- timers
     def _tick(self):
         if self.closed:
             return
-        self.elapsed_lbl.config(text=T("running") + fmt_duration(time.time() - self.start_time))
-        self.clock_lbl.config(text=dt.datetime.now().strftime("%Y-%m-%d  %H:%M:%S"))
-        now = time.time()
-        if now > self.alert_until and self.alert_lbl.cget("text"):
-            self.alert_lbl.config(text="")
+        c, now = self.canvas, time.time()
+        c.itemconfig(self.status, text=self._status_text())
+        d = dt.datetime.now()
+        c.itemconfig(self.clock, text=f"{d:%H:%M}")
+        c.itemconfig(self.date, text=fmt_day(d))
+        if now > self.alert_until:
+            c.itemconfig(self.mon, text=self.mon_text, fill=DIM)
+        if now > self.msg_until:
+            c.itemconfig(self.msg, text="")
         if not IS_WIN and self.cfg["keep_display_on"] and now - self.last_idle_reset > 30:
             self.last_idle_reset = now
             try:
@@ -948,12 +1026,17 @@ class LockScreen:
                 pass
         self.win.after(1000, self._tick)
 
-    def _spin(self):
+    def _animate(self):
         if self.closed:
             return
-        self.angle = (self.angle - 12) % 360
-        self.canvas.itemconfig(self.arc, start=self.angle)
-        self.win.after(50, self._spin)
+        # a segment glides along the track, about 3 s per pass
+        span = self.bar_w + self.seg_w
+        self.bar_pos = (self.bar_pos + span / 90) % span
+        left = self.bar_x + self.bar_pos - self.seg_w
+        x0, x1 = max(self.bar_x, left), min(self.bar_x + self.bar_w, left + self.seg_w)
+        _, y0, _, y1 = self.canvas.coords(self.seg)
+        self.canvas.coords(self.seg, x0, y0, max(x0, x1), y1)
+        self.win.after(33, self._animate)
 
     def _keep_on_top(self):
         if self.closed:
@@ -977,13 +1060,14 @@ class LockScreen:
                 self._add_log(kind, text)
                 if kind in self.counts:
                     self.counts[kind] += 1
-                    self._alert(text)
+                    self._alert()
         except queue.Empty:
             pass
         self.win.after(300, self._poll_events)
 
-    def _alert(self, text):
-        self.alert_lbl.config(text=T("activity") + text)
+    def _alert(self):
+        # state plainly that it was recorded; no live detail that turns poking into a game
+        self.canvas.itemconfig(self.mon, text=T("recorded", f"{dt.datetime.now():%H:%M:%S}"), fill=ALERT)
         self.alert_until = time.time() + 6
         if self.cfg["beep_on_alert"]:
             try:
@@ -997,7 +1081,6 @@ class LockScreen:
 
     def _add_log(self, kind, text):
         self.log.append(f"[{dt.datetime.now():%H:%M:%S}] {text}")
-        self.log_lbl.config(text="\n".join(self.log[-6:]))
 
     # --- unlock
     def try_unlock(self):
@@ -1010,8 +1093,9 @@ class LockScreen:
         self.fail_count += 1
         self.counts["password"] += 1
         self._add_log("password", T("wrong_n", self.fail_count))
-        self._alert(T("wrong"))
-        self.msg_lbl.config(text=T("wrong"), fg=ALERT)
+        self._alert()
+        self.canvas.itemconfig(self.msg, text=T("wrong"))
+        self.msg_until = time.time() + 6
 
     def unlock(self):
         self.closed = True
