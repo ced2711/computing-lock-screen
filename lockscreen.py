@@ -69,7 +69,11 @@ STRINGS = {
                    "lock window has focus. Log in with an X11 session for full protection.",
         "sec_other": "Other", "awake": "Prevent system sleep (recommended, keeps jobs running)",
         "display": "Keep display on", "beep": "Beep when activity is detected",
-        "quit": "Quit", "lock": "🔒 Lock screen",
+        "quit": "Quit", "lock": "Lock now",
+        "app_sub": "Locks the screen while your jobs keep running.",
+        "edit_text": "Edit title and message", "pwd_saved": "Using your saved password",
+        "pwd_change": "Change", "pwd_keep": "Keep the saved password", "sec_detect": "Detection",
+        "more": "More options", "enter_hint": "Enter = lock now",
         "pwd_short": "Password must be at least 4 characters", "pwd_mismatch": "Passwords do not match",
         "cam_nan": "Camera settings must be numbers", "settings": "Settings",
         "face_na": "Face detection unavailable (needs OpenCV 4.x); motion detection only",
@@ -117,7 +121,11 @@ STRINGS = {
                    "需要完整保护请用 X11 会话登录。",
         "sec_other": "其他", "awake": "阻止系统睡眠（推荐，保证任务不中断）",
         "display": "保持屏幕常亮", "beep": "检测到活动时发出提示音",
-        "quit": "退出", "lock": "🔒 开始锁屏",
+        "quit": "退出", "lock": "立即锁屏",
+        "app_sub": "锁住屏幕，后台任务继续运行。",
+        "edit_text": "修改标题和说明", "pwd_saved": "使用上次保存的密码",
+        "pwd_change": "修改", "pwd_keep": "继续用上次的密码", "sec_detect": "检测",
+        "more": "更多选项", "enter_hint": "按 Enter 立即锁屏",
         "pwd_short": "密码至少 4 位", "pwd_mismatch": "两次输入的密码不一致",
         "cam_nan": "摄像头参数必须是数字", "settings": "设置",
         "face_na": "人脸检测不可用（需要 OpenCV 4.x），仅做画面变化检测",
@@ -651,16 +659,140 @@ class TkInputMonitor(InputReporter):
 
 # ---------------------------------------------------------------- settings window
 
+# same family as the lock screen: navy header, white cards on a light page
+PAGE, CARD, LINE, INK, MUTED, NAVY, NAVY_HOVER, NAVY_DIM, TOGGLE_ON, TOGGLE_OFF, DANGER = (
+    "#f3f5f8", "#ffffff", "#e2e6eb", "#14202e", "#5f6b7a", "#0e2a47", "#1a3d63", "#a9bdd3",
+    "#2563a8", "#c3cad3", "#b42318")
+
+
+class Toggle(tk.Canvas):
+    """A small on/off switch bound to a BooleanVar."""
+
+    def __init__(self, parent, var, s, enabled=True):
+        self.w, self.h = int(38 * s), int(22 * s)
+        super().__init__(parent, width=self.w, height=self.h, bg=parent["bg"], highlightthickness=0,
+                         cursor="hand2" if enabled else "")
+        self.var, self.enabled = var, enabled
+        self.bind("<Button-1>", self.flip)
+        self._trace = var.trace_add("write", lambda *a: self.draw())
+        self.bind("<Destroy>", lambda e: self._untrace())
+        self.draw()
+
+    def _untrace(self):
+        try:
+            self.var.trace_remove("write", self._trace)
+        except tk.TclError:
+            pass
+
+    def flip(self, e=None):
+        if self.enabled:
+            self.var.set(not self.var.get())
+
+    def draw(self):
+        self.delete("all")
+        on, w, h = bool(self.var.get()), self.w, self.h
+        fill = (TOGGLE_ON if on else TOGGLE_OFF) if self.enabled else LINE
+        self.create_oval(0, 0, h, h, fill=fill, width=0)
+        self.create_oval(w - h, 0, w, h, fill=fill, width=0)
+        self.create_rectangle(h / 2, 0, w - h / 2, h, fill=fill, width=0)
+        p = max(2, h // 8)
+        x = w - h + p if on else p
+        self.create_oval(x, p, x + h - 2 * p, h - p, fill="#ffffff", width=0)
+
+
 class SettingsWindow:
     def __init__(self, root, cfg, on_start):
         self.root, self.cfg, self.on_start = root, cfg, on_start
+        self.change_pwd = not cfg["pwd_hash"]
+        self.show_text = False
+        self.show_more = False
         root.resizable(False, False)
+        root.configure(bg=PAGE)
         try:
             ttk.Style().theme_use("vista" if IS_WIN else "clam")
         except tk.TclError:
             pass
+        self.s = root.winfo_fpixels("1i") / 96  # Tk pixels per 96-dpi pixel
         self.build()
+        root.update_idletasks()
+        root.geometry(f"+{(root.winfo_screenwidth() - root.winfo_reqwidth()) // 2}"
+                      f"+{max(0, (root.winfo_screenheight() - root.winfo_reqheight()) // 2 - self.px(40))}")
 
+    # --- small building blocks
+    def font(self, size, weight="normal"):
+        return (TEXT_FONT, size, weight)
+
+    def label(self, parent, text, size=10, fg=INK, weight="normal", **kw):
+        return tk.Label(parent, text=text, bg=parent["bg"], fg=fg, font=self.font(size, weight),
+                        anchor="w", justify="left", **kw)
+
+    def link(self, parent, text, command, fg=TOGGLE_ON):
+        lbl = self.label(parent, text, fg=fg, cursor="hand2")
+        lbl.bind("<Button-1>", lambda e: command())
+        return lbl
+
+    def card(self, title=None):
+        outer = tk.Frame(self.body, bg=LINE)
+        outer.pack(fill="x", pady=(0, self.px(12)))
+        inner = tk.Frame(outer, bg=CARD, padx=self.px(18), pady=self.px(14))
+        inner.pack(fill="both", padx=1, pady=1)
+        if title:
+            self.label(inner, title, 11, weight="bold").pack(fill="x", pady=(0, self.px(8)))
+        return inner
+
+    def px(self, n):
+        return int(n * self.s)
+
+    def entry(self, parent, var, show=None, width=40):
+        e = tk.Entry(parent, textvariable=var, show=show or "", width=width, font=self.font(11),
+                     bg=CARD, fg=INK, insertbackground=INK, relief="flat", highlightthickness=1,
+                     highlightbackground="#c9d0d8", highlightcolor=TOGGLE_ON)
+        return e
+
+    def field(self, parent, text, var, hint="", show=None):
+        self.label(parent, text, 10, MUTED).pack(fill="x", pady=(self.px(6), self.px(3)))
+        e = self.entry(parent, var, show)
+        e.pack(fill="x", ipady=self.px(5))
+        if hint:
+            self.label(parent, hint, 9, MUTED).pack(fill="x", pady=(self.px(3), 0))
+        return e
+
+    def switch(self, parent, text, var, enabled=True, hint=""):
+        row = tk.Frame(parent, bg=parent["bg"])
+        row.pack(fill="x", pady=self.px(5))
+        t = Toggle(row, var, self.s, enabled)
+        t.pack(side="left", anchor="n", pady=(self.px(1), 0))
+        col = tk.Frame(row, bg=row["bg"])
+        col.pack(side="left", fill="x", expand=True, padx=(self.px(12), 0))
+        lbl = self.label(col, text, 10, INK if enabled else MUTED)
+        lbl.pack(fill="x")
+        if enabled:
+            lbl.configure(cursor="hand2")
+            lbl.bind("<Button-1>", t.flip)
+        if hint:
+            self.label(col, hint, 9, DANGER if not enabled else MUTED,
+                       wraplength=self.px(400)).pack(fill="x")
+        return row
+
+    def number(self, parent, text, hint, var, lo, hi, step):
+        row = tk.Frame(parent, bg=parent["bg"])
+        row.pack(fill="x", pady=self.px(5))
+        col = tk.Frame(row, bg=row["bg"])
+        col.pack(side="left", fill="x", expand=True)
+        self.label(col, text, 10).pack(fill="x")
+        self.label(col, hint, 9, MUTED, wraplength=self.px(330)).pack(fill="x")
+        tk.Spinbox(row, from_=lo, to=hi, increment=step, textvariable=var, width=7, font=self.font(11),
+                   relief="flat", bg=CARD, fg=INK, buttonbackground=PAGE, highlightthickness=1,
+                   highlightbackground="#c9d0d8", highlightcolor=TOGGLE_ON,
+                   justify="right").pack(side="right", anchor="n", ipady=self.px(3))
+
+    def expander(self, parent, text, opened, on_toggle):
+        lbl = self.link(parent, ("▾  " if opened else "▸  ") + text, on_toggle, fg=INK)
+        lbl.configure(font=self.font(10, "bold"))
+        lbl.pack(fill="x", pady=(self.px(4), 0))
+        return lbl
+
+    # --- the window
     def build(self):
         global _lang
         cfg, root = self.cfg, self.root
@@ -669,110 +801,205 @@ class SettingsWindow:
         for child in root.winfo_children():
             child.destroy()
 
-        f = ttk.Frame(root, padding=18)
-        f.grid(sticky="nsew")
-        r = 0
+        self._make_vars()
 
-        def section(text):
-            nonlocal r
-            ttk.Label(f, text=text, font=(UI_FONT, 11, "bold")).grid(
-                row=r, column=0, columnspan=3, sticky="w", pady=(12 if r else 0, 4))
-            r += 1
+        # header: name, one-line purpose, language
+        head = tk.Frame(root, bg=NAVY, padx=self.px(22), pady=self.px(16))
+        head.pack(fill="x")
+        langs = tk.Frame(head, bg=NAVY)
+        langs.pack(side="right", anchor="n")
+        for code, name in LANG_NAMES.items():
+            on = code == _lang
+            l = tk.Label(langs, text=name, bg=NAVY, fg="#ffffff" if on else NAVY_DIM,
+                         font=self.font(10, "bold" if on else "normal"), cursor="" if on else "hand2",
+                         padx=self.px(6))
+            l.pack(side="left")
+            if not on:
+                l.bind("<Button-1>", lambda e, c=code: self.switch_language(c))
+        tk.Label(head, text="Computing Lock Screen", bg=NAVY, fg="#ffffff",
+                 font=(DISPLAY_FONT, 16, "bold"), anchor="w").pack(fill="x")
+        tk.Label(head, text=T("app_sub"), bg=NAVY, fg=NAVY_DIM, font=self.font(10),
+                 anchor="w").pack(fill="x", pady=(self.px(2), 0))
 
-        def row(label, widget, hint=""):
-            nonlocal r
-            ttk.Label(f, text=label).grid(row=r, column=0, sticky="w", padx=(0, 10), pady=3)
-            widget.grid(row=r, column=1, sticky="we", pady=3)
-            if hint:
-                ttk.Label(f, text=hint, foreground="#888").grid(row=r, column=2, sticky="w", padx=8)
-            r += 1
+        # footer
+        foot = tk.Frame(root, bg=CARD, padx=self.px(20), pady=self.px(14))
+        foot.pack(fill="x", side="bottom")
+        tk.Frame(root, bg=LINE, height=1).pack(fill="x", side="bottom")
+        lock = tk.Label(foot, text=T("lock"), bg=NAVY, fg="#ffffff", font=self.font(11, "bold"),
+                        padx=self.px(22), pady=self.px(8), cursor="hand2")
+        lock.pack(side="right")
+        lock.bind("<Button-1>", lambda e: self.start())
+        lock.bind("<Enter>", lambda e: lock.configure(bg=NAVY_HOVER))
+        lock.bind("<Leave>", lambda e: lock.configure(bg=NAVY))
+        quit_ = tk.Label(foot, text=T("quit"), bg=CARD, fg=MUTED, font=self.font(11),
+                         padx=self.px(14), pady=self.px(8), cursor="hand2")
+        quit_.pack(side="right", padx=(0, self.px(6)))
+        quit_.bind("<Button-1>", lambda e: root.destroy())
+        self.label(foot, T("enter_hint"), 9, MUTED).pack(side="left")
+        root.bind("<Return>", lambda e: self.start())
 
-        def check(text, var, enabled=True):
-            nonlocal r
-            w = ttk.Checkbutton(f, text=text, variable=var)
-            w.grid(row=r, column=0, columnspan=2, sticky="w"); r += 1
-            if not enabled:
-                w.state(["disabled"]); var.set(False)
+        # the cards scroll when they do not fit the screen; header and footer stay put
+        area = tk.Frame(root, bg=PAGE)
+        area.pack(fill="both", expand=True)
+        self.scroll = tk.Canvas(area, bg=PAGE, highlightthickness=0)
+        self.scroll.pack(side="left", fill="both", expand=True)
+        self.bar = ttk.Scrollbar(area, orient="vertical", command=self.scroll.yview)
+        self.scroll.configure(yscrollcommand=self.bar.set)
+        self.body = tk.Frame(self.scroll, bg=PAGE, padx=self.px(20), pady=self.px(16))
+        self.scroll.create_window(0, 0, window=self.body, anchor="nw")
+        root.bind_all("<MouseWheel>", lambda e: self._wheel(-1 if e.delta > 0 else 1))
+        root.bind_all("<Button-4>", lambda e: self._wheel(-1))
+        root.bind_all("<Button-5>", lambda e: self._wheel(1))
+        tk.Frame(self.body, bg=PAGE, width=self.px(500), height=0).pack()  # fixes the width
 
-        # display text
-        section(T("sec_text"))
-        self.v_lang = tk.StringVar(value=LANG_NAMES[_lang])
-        lang_box = ttk.Combobox(f, textvariable=self.v_lang, values=list(LANG_NAMES.values()),
-                                state="readonly", width=12)
-        lang_box.bind("<<ComboboxSelected>>", lambda e: self.switch_language())
-        row(T("language"), lang_box)
+        # 1. what passers-by read
+        c = self.card(T("sec_text"))
+        self.field(c, T("note"), self.v_note, T("note_hint"))
+        self.expander(c, T("edit_text"), self.show_text, self._toggle_text)
+        if self.show_text:
+            self.field(c, T("title"), self.v_title)
+            self.field(c, T("subtitle_lbl"), self.v_sub)
+
+        # 2. password
+        c = self.card(T("sec_pwd"))
+        if self.change_pwd:
+            first = self.field(c, T("pwd"), self.v_pwd, show=PWD_CHAR)
+            self.field(c, T("pwd2"), self.v_pwd2, show=PWD_CHAR)
+            if cfg["pwd_hash"]:
+                self.link(c, T("pwd_keep"), self._keep_pwd).pack(fill="x", pady=(self.px(8), 0))
+            first.focus_set()
+        else:
+            row = tk.Frame(c, bg=CARD)
+            row.pack(fill="x")
+            self.label(row, "✓  " + T("pwd_saved"), 10, INK).pack(side="left")
+            self.link(row, T("pwd_change"), self._change_pwd).pack(side="right")
+
+        # 3. detection
+        c = self.card(T("sec_detect"))
+        self.switch(c, T("kb"), self.v_kb)
+        self.switch(c, T("ms"), self.v_ms)
+        missing = ""
+        if not HAS_CV2:
+            missing = T(("cam_missing_exe" if IS_WIN else "cam_missing_bin")
+                        if getattr(sys, "frozen", False) else "cam_missing")
+        self.switch(c, T("cam_enable"), self.v_cam, HAS_CV2, missing)
+        self.cam_box = tk.Frame(c, bg=CARD)
+        self.cam_box.pack(fill="x")
+        self._camera_options()
+        if IS_WAYLAND:
+            self.label(c, T("wayland"), 9, DANGER, wraplength=self.px(440)).pack(fill="x", pady=(self.px(6), 0))
+
+        # 4. everything else, folded away
+        self.expander(self.body, T("more"), self.show_more, self._toggle_more)
+        if self.show_more:
+            c = self.card()
+            self.switch(c, T("block" if IS_WIN else "block_linux"), self.v_block)
+            self.switch(c, T("awake"), self.v_awake)
+            self.switch(c, T("display"), self.v_disp)
+            self.switch(c, T("beep"), self.v_beep)
+
+        self._fit()
+        self.scroll.yview_moveto(0)
+
+    def _fit(self):
+        """Size the scroll area to the cards, capped so the window fits on the screen."""
+        root = self.root
+        root.update_idletasks()
+        w, h = self.body.winfo_reqwidth(), self.body.winfo_reqheight()
+        chrome = root.winfo_reqheight() - self.scroll.winfo_reqheight()
+        screen_h = root.winfo_screenheight()
+        room = int(screen_h * 0.8) - chrome  # leaves space for the title bar and taskbar
+        self.scroll.configure(width=w, height=min(h, room), scrollregion=(0, 0, w, h))
+        if h > room:
+            self.bar.pack(side="right", fill="y")
+        else:
+            self.bar.pack_forget()
+            self.scroll.yview_moveto(0)
+        # keep the whole window on screen when it grows
+        root.update_idletasks()
+        bottom = int(screen_h * 0.9)
+        if root.winfo_y() + root.winfo_height() > bottom:
+            root.geometry(f"+{root.winfo_x()}+{max(0, bottom - root.winfo_height())}")
+
+    def _wheel(self, step):
+        if self.bar.winfo_ismapped():
+            self.scroll.yview_scroll(step * 3, "units")
+
+    def _make_vars(self):
+        """Fresh Tk variables from cfg (a rebuild keeps edits because collect() ran first)."""
+        cfg = self.cfg
+        old = getattr(self, "v_pwd", None)
+        self.v_pwd = tk.StringVar(value=old.get() if old else "")
+        self.v_pwd2 = tk.StringVar(value=self.v_pwd2.get() if old else "")
         self.v_title = tk.StringVar(value=cfg["title"])
         self.v_sub = tk.StringVar(value=cfg["subtitle"])
         self.v_note = tk.StringVar(value=cfg["note"])
-        row(T("title"), ttk.Entry(f, textvariable=self.v_title, width=38))
-        row(T("subtitle_lbl"), ttk.Entry(f, textvariable=self.v_sub, width=38))
-        row(T("note"), ttk.Entry(f, textvariable=self.v_note, width=38), T("note_hint"))
-
-        # password
-        section(T("sec_pwd"))
-        self.v_pwd, self.v_pwd2 = tk.StringVar(), tk.StringVar()
-        row(T("pwd"), ttk.Entry(f, textvariable=self.v_pwd, show=PWD_CHAR, width=38),
-            T("pwd_reuse") if cfg["pwd_hash"] else "")
-        row(T("pwd2"), ttk.Entry(f, textvariable=self.v_pwd2, show=PWD_CHAR, width=38))
-
-        # camera
-        section(T("sec_cam"))
-        self.v_cam = tk.BooleanVar(value=cfg["camera_enabled"])
+        self.v_cam = tk.BooleanVar(value=cfg["camera_enabled"] and HAS_CV2)
         self.v_cam_idx = tk.IntVar(value=cfg["camera_index"])
         self.v_cam_int = tk.DoubleVar(value=cfg["camera_interval"])
         self.v_cam_sens = tk.DoubleVar(value=cfg["camera_sensitivity"])
         self.v_face = tk.BooleanVar(value=cfg["camera_face"])
         self.v_snap = tk.BooleanVar(value=cfg["save_snapshots"])
-        check(T("cam_enable"), self.v_cam, HAS_CV2)
-        if not HAS_CV2:
-            missing = (("cam_missing_exe" if IS_WIN else "cam_missing_bin")
-                       if getattr(sys, "frozen", False) else "cam_missing")
-            ttk.Label(f, text=T(missing), foreground="#c33").grid(
-                row=r, column=0, columnspan=3, sticky="w"); r += 1
-        row(T("cam_index"), ttk.Spinbox(f, from_=0, to=5, textvariable=self.v_cam_idx, width=8), T("cam_index_hint"))
-        row(T("cam_int"), ttk.Spinbox(f, from_=0.5, to=600, increment=0.5,
-                                      textvariable=self.v_cam_int, width=8), T("cam_int_hint"))
-        row(T("cam_sens"), ttk.Spinbox(f, from_=0.5, to=50, increment=0.5,
-                                       textvariable=self.v_cam_sens, width=8), T("cam_sens_hint"))
-        check(T("cam_face"), self.v_face)
-        check(T("cam_snap"), self.v_snap)
         keep = float(cfg["snapshot_retention_hours"] or 0)
         self.v_keep = tk.DoubleVar(value=int(keep) if keep.is_integer() else keep)
-        row(T("keep_hours"), ttk.Spinbox(f, from_=0, to=720, increment=1,
-                                         textvariable=self.v_keep, width=8), T("keep_hint"))
-        snap_row = ttk.Frame(f)
-        snap_row.grid(row=r, column=0, columnspan=3, sticky="w", pady=(2, 0)); r += 1
-        self.snap_count = ttk.Label(snap_row)
-        self.snap_count.pack(side="left")
-        ttk.Button(snap_row, text=T("open_snaps"), command=self.open_snapshots).pack(side="left", padx=(10, 0))
-        ttk.Button(snap_row, text=T("delete_all"), command=self.delete_all).pack(side="left", padx=(6, 0))
-        self.refresh_snap_count()
-
-        # keyboard / mouse
-        section(T("sec_input"))
         self.v_kb = tk.BooleanVar(value=cfg["keyboard_enabled"])
         self.v_ms = tk.BooleanVar(value=cfg["mouse_enabled"])
         self.v_block = tk.BooleanVar(value=cfg["block_shortcuts"])
-        check(T("kb"), self.v_kb)
-        check(T("ms"), self.v_ms)
-        check(T("block" if IS_WIN else "block_linux"), self.v_block)
-        if IS_WAYLAND:
-            ttk.Label(f, text=T("wayland"), foreground="#c33").grid(
-                row=r, column=0, columnspan=3, sticky="w"); r += 1
-
-        # other
-        section(T("sec_other"))
         self.v_awake = tk.BooleanVar(value=cfg["keep_awake"])
         self.v_disp = tk.BooleanVar(value=cfg["keep_display_on"])
         self.v_beep = tk.BooleanVar(value=cfg["beep_on_alert"])
-        check(T("awake"), self.v_awake)
-        check(T("display"), self.v_disp)
-        check(T("beep"), self.v_beep)
+        self.v_cam.trace_add("write", lambda *a: self._camera_options())
 
-        btns = ttk.Frame(f)
-        btns.grid(row=r, column=0, columnspan=3, pady=(18, 0), sticky="e")
-        ttk.Button(btns, text=T("quit"), command=root.destroy).pack(side="right", padx=(8, 0))
-        ttk.Button(btns, text=T("lock"), command=self.start).pack(side="right")
+    def _camera_options(self):
+        """Camera settings appear only while camera detection is on."""
+        box = self.cam_box
+        for child in box.winfo_children():
+            child.destroy()
+        if not self.v_cam.get():
+            box.configure(height=1)
+            if hasattr(self, "scroll"):
+                self._fit()
+            return
+        inner = tk.Frame(box, bg=CARD, padx=self.px(14))
+        inner.pack(fill="x", pady=(self.px(2), 0))
+        tk.Frame(inner, bg=LINE, width=self.px(2)).place(x=-self.px(14), y=0, relheight=1)
+        self.number(inner, T("cam_index"), T("cam_index_hint"), self.v_cam_idx, 0, 5, 1)
+        self.number(inner, T("cam_int"), T("cam_int_hint"), self.v_cam_int, 0.5, 600, 0.5)
+        self.number(inner, T("cam_sens"), T("cam_sens_hint"), self.v_cam_sens, 0.5, 50, 0.5)
+        self.switch(inner, T("cam_face"), self.v_face)
+        self.switch(inner, T("cam_snap"), self.v_snap)
+        self.number(inner, T("keep_hours"), T("keep_hint"), self.v_keep, 0, 720, 1)
+        row = tk.Frame(inner, bg=CARD)
+        row.pack(fill="x", pady=(self.px(4), self.px(2)))
+        self.snap_count = self.label(row, "", 9, MUTED)
+        self.snap_count.pack(side="left")
+        self.link(row, T("delete_all"), self.delete_all, fg=DANGER).pack(side="right")
+        self.link(row, T("open_snaps"), self.open_snapshots).pack(side="right", padx=(0, self.px(14)))
+        self.refresh_snap_count()
+        if hasattr(self, "scroll"):
+            self._fit()
+
+    def _rebuild(self):
+        if self.collect():
+            self.build()
+
+    def _toggle_text(self):
+        self.show_text = not self.show_text
+        self._rebuild()
+
+    def _toggle_more(self):
+        self.show_more = not self.show_more
+        self._rebuild()
+
+    def _change_pwd(self):
+        self.change_pwd = True
+        self._rebuild()
+
+    def _keep_pwd(self):
+        self.change_pwd = False
+        self.v_pwd.set("")
+        self.v_pwd2.set("")
+        self._rebuild()
 
     def refresh_snap_count(self):
         self.snap_count.config(text=T("snap_count", len(list_snapshots())))
@@ -812,8 +1039,7 @@ class SettingsWindow:
         )
         return True
 
-    def switch_language(self):
-        new = next(k for k, v in LANG_NAMES.items() if v == self.v_lang.get())
+    def switch_language(self, new):
         if new == self.cfg["language"] or not self.collect():
             return
         # swap the title and subtitle too if they are still the other language's defaults
@@ -837,6 +1063,9 @@ class SettingsWindow:
             cfg["pwd_salt"] = secrets.token_hex(16)
             cfg["pwd_hash"] = hash_password(p1, cfg["pwd_salt"])
         save_config(cfg)
+        self.root.unbind("<Return>")
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.root.unbind_all(seq)
         self.on_start()
 
 
