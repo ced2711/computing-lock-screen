@@ -9,6 +9,7 @@ Linux (X11) grabs keyboard and pointer through Tk, like xscreensaver / i3lock do
 Camera detection is optional: pip install "opencv-python-headless<5"
 """
 
+import base64
 import ctypes
 import datetime as dt
 import hashlib
@@ -38,13 +39,16 @@ LOG_DIR = os.path.join(APP_DIR, "logs")
 # Linux families are resolved to the first installed one in pick_fonts()
 UI_FONT = "Segoe UI"
 MONO_FONT = "Consolas"
+DISPLAY_FONT = TEXT_FONT = "Segoe UI"  # lock screen; Segoe UI Variable when installed (Windows 11)
 PWD_CHAR = "●" if IS_WIN else "•"
 
 # ---------------------------------------------------------------- strings
 
 STRINGS = {
     "en": {
-        "subtitle": "DO NOT TOUCH  ·  Tasks in progress",
+        "title_default": "This computer is running a job",
+        "subtitle": "Don't use the keyboard or mouse, and don't turn off or unplug this computer. "
+                    "Interrupting it can lose hours of work.",
         "settings_title": "Computing Lock Screen — Settings",
         "sec_text": "Lock screen text", "title": "Title", "subtitle_lbl": "Subtitle",
         "note": "Note (optional)", "note_hint": "e.g. Back in ~2 hours", "language": "Language",
@@ -65,7 +69,11 @@ STRINGS = {
                    "lock window has focus. Log in with an X11 session for full protection.",
         "sec_other": "Other", "awake": "Prevent system sleep (recommended, keeps jobs running)",
         "display": "Keep display on", "beep": "Beep when activity is detected",
-        "quit": "Quit", "lock": "🔒 Lock screen",
+        "quit": "Quit", "lock": "Lock now",
+        "app_sub": "Locks the screen while your jobs keep running.",
+        "edit_text": "Edit title and message", "pwd_saved": "Using your saved password",
+        "pwd_change": "Change", "pwd_keep": "Keep the saved password", "sec_detect": "Detection",
+        "more": "More options", "enter_hint": "Enter = lock now",
         "pwd_short": "Password must be at least 4 characters", "pwd_mismatch": "Passwords do not match",
         "cam_nan": "Camera settings must be numbers", "settings": "Settings",
         "face_na": "Face detection unavailable (needs OpenCV 4.x); motion detection only",
@@ -73,10 +81,14 @@ STRINGS = {
         "changed": "{:.1f}% of image changed", "faces": "{} face(s) detected", "camera": "Camera: ",
         "key": "Keyboard: key press detected", "key_blocked": " (system shortcut blocked)",
         "mouse": "Mouse: ", "moved": "moved", "clicked": "clicked", "scrolled": "scrolled",
-        "started": "Lock screen started", "mon_cam": "📷 Camera (every {:g}s)", "mon_kb": "⌨ Keyboard",
-        "mon_ms": "🖱 Mouse", "monitoring": "Monitoring:  ", "unlock": "Unlock",
-        "enter_pwd": "Enter password to unlock", "running": "Running  ",
-        "activity": "⚠ Activity detected · ",
+        "started": "Lock screen started",
+        "mon_cam": "Activity on this computer is monitored and recorded, including camera images.",
+        "mon_input": "Keyboard and mouse activity on this computer is monitored and recorded.",
+        "recorded": "Activity recorded at {}.", "owner": "Owner sign-in",
+        "running_for": "Running for {}", "lt_min": "less than a minute", "min": "{} min", "h_min": "{} h {} min",
+        "weekdays": "Monday Tuesday Wednesday Thursday Friday Saturday Sunday",
+        "months": "January February March April May June July August September October November December",
+        "day_fmt": "{}, {} {}",
         "keep_hours": "Auto-delete after (h)", "keep_hint": "Hours after the session ends; 0 = keep forever",
         "snap_count": "{} snapshot(s) in captures/", "delete_all": "Delete all",
         "delete_confirm": "Permanently delete all {} snapshot(s)?",
@@ -88,7 +100,8 @@ STRINGS = {
         "open_snaps": "Open snapshots folder", "open_log": "Open log", "close": "Close",
     },
     "zh": {
-        "subtitle": "DO NOT TOUCH  ·  程序运行中，请勿触碰",
+        "title_default": "这台电脑正在运行任务",
+        "subtitle": "请勿使用键盘或鼠标，也不要关机或拔掉电源。中断会导致数小时的工作丢失。",
         "settings_title": "Computing Lock Screen — 设置",
         "sec_text": "锁屏显示", "title": "主标题", "subtitle_lbl": "副标题",
         "note": "备注（可选）", "note_hint": "例如：预计 2 小时后结束", "language": "语言",
@@ -108,7 +121,11 @@ STRINGS = {
                    "需要完整保护请用 X11 会话登录。",
         "sec_other": "其他", "awake": "阻止系统睡眠（推荐，保证任务不中断）",
         "display": "保持屏幕常亮", "beep": "检测到活动时发出提示音",
-        "quit": "退出", "lock": "🔒 开始锁屏",
+        "quit": "退出", "lock": "立即锁屏",
+        "app_sub": "锁住屏幕，后台任务继续运行。",
+        "edit_text": "修改标题和说明", "pwd_saved": "使用上次保存的密码",
+        "pwd_change": "修改", "pwd_keep": "继续用上次的密码", "sec_detect": "检测",
+        "more": "更多选项", "enter_hint": "按 Enter 立即锁屏",
         "pwd_short": "密码至少 4 位", "pwd_mismatch": "两次输入的密码不一致",
         "cam_nan": "摄像头参数必须是数字", "settings": "设置",
         "face_na": "人脸检测不可用（需要 OpenCV 4.x），仅做画面变化检测",
@@ -116,10 +133,14 @@ STRINGS = {
         "changed": "画面变化 {:.1f}%", "faces": "检测到 {} 张人脸", "camera": "摄像头：",
         "key": "键盘：检测到按键", "key_blocked": "（已拦截系统快捷键）",
         "mouse": "鼠标：", "moved": "移动", "clicked": "点击", "scrolled": "滚轮",
-        "started": "锁屏已启动", "mon_cam": "📷 摄像头（每 {:g}s）", "mon_kb": "⌨ 键盘",
-        "mon_ms": "🖱 鼠标", "monitoring": "监测中：", "unlock": "解锁",
-        "enter_pwd": "输入密码解锁", "running": "已运行  ",
-        "activity": "⚠ 检测到活动 · ",
+        "started": "锁屏已启动",
+        "mon_cam": "本机的活动正在被监控和记录，包括摄像头画面。",
+        "mon_input": "本机的键盘和鼠标活动正在被监控和记录。",
+        "recorded": "已记录 {} 的活动。", "owner": "所有者解锁",
+        "running_for": "已运行 {}", "lt_min": "不到 1 分钟", "min": "{} 分钟", "h_min": "{} 小时 {} 分钟",
+        "weekdays": "星期一 星期二 星期三 星期四 星期五 星期六 星期日",
+        "months": "1 2 3 4 5 6 7 8 9 10 11 12",
+        "day_fmt": "{2}月{1}日 {0}",
         "keep_hours": "自动删除（小时）", "keep_hint": "锁屏结束后多少小时删除；0 = 永久保留",
         "snap_count": "captures/ 中有 {} 张快照", "delete_all": "全部删除",
         "delete_confirm": "确定永久删除全部 {} 张快照吗？",
@@ -148,7 +169,7 @@ def T(key, *args):
 
 DEFAULT_CONFIG = {
     "language": "en",
-    "title": "COMPUTING",
+    "title": STRINGS["en"]["title_default"],
     "subtitle": STRINGS["en"]["subtitle"],
     "note": "",
     "camera_enabled": False,
@@ -168,6 +189,8 @@ DEFAULT_CONFIG = {
     "pwd_hash": "",
 }
 
+OLD_SUBTITLES = ("DO NOT TOUCH  ·  Tasks in progress", "DO NOT TOUCH  ·  程序运行中，请勿触碰")
+
 # ---------------------------------------------------------------- helpers
 
 def load_config():
@@ -177,6 +200,12 @@ def load_config():
             cfg.update(json.load(f))
     except (OSError, ValueError):
         pass
+    # 1.x defaults: move untouched ones to the new wording
+    lang = cfg["language"] if cfg["language"] in STRINGS else "en"
+    if cfg["title"] == "COMPUTING":
+        cfg["title"] = STRINGS[lang]["title_default"]
+    if cfg["subtitle"] in OLD_SUBTITLES:
+        cfg["subtitle"] = STRINGS[lang]["subtitle"]
     return cfg
 
 
@@ -207,14 +236,17 @@ def set_dpi_aware():
 
 def pick_fonts(root):
     """Segoe UI / Consolas do not exist on Linux: use the first installed look-alike."""
-    global UI_FONT, MONO_FONT
-    if IS_WIN:
-        return
+    global UI_FONT, MONO_FONT, DISPLAY_FONT, TEXT_FONT
     have = set(tkfont.families(root))
+    if IS_WIN:
+        if "Segoe UI Variable Display" in have:
+            DISPLAY_FONT, TEXT_FONT = "Segoe UI Variable Display", "Segoe UI Variable Text"
+        return
     UI_FONT = next((f for f in ("Noto Sans", "Ubuntu", "Cantarell", "DejaVu Sans", "Liberation Sans")
                     if f in have), "TkDefaultFont")
     MONO_FONT = next((f for f in ("DejaVu Sans Mono", "Noto Sans Mono", "Ubuntu Mono", "Liberation Mono")
                       if f in have), "TkFixedFont")
+    DISPLAY_FONT = TEXT_FONT = UI_FONT
 
 
 def virtual_screen(win):
@@ -314,34 +346,59 @@ def cleanup_expired(cfg):
     return delete_snapshots(hours) if hours > 0 else 0
 
 
-def schedule_cleanup(cfg, snaps):
-    """Start a tiny detached process that deletes this session's snapshots when they expire,
-    even if the app is closed. (If the PC restarts first, the next app launch cleans up.)"""
-    hours = float(cfg.get("snapshot_retention_hours") or 0)
-    if not snaps or hours <= 0:
-        return
-    if getattr(sys, "frozen", False):  # packaged .exe: re-launch itself
-        cmd = [sys.executable]
-    else:
-        exe = sys.executable
-        w = os.path.join(os.path.dirname(exe), "pythonw.exe")
-        cmd = [w if os.path.exists(w) else exe, os.path.abspath(__file__)]
+def cleanup_command(paths, deadline):
+    """Command line for a small shell process that waits until `deadline` (Unix time) and then
+    deletes `paths`. It waits on the wall clock in steps of at most a minute, so a PC that
+    sleeps through the deadline still cleans up right after it wakes."""
+    deadline = int(deadline + 0.999)
     if IS_WIN:
-        detach = dict(creationflags=0x00000008 | 0x08000000)  # DETACHED_PROCESS | CREATE_NO_WINDOW
+        quoted = ",".join("'" + p.replace("'", "''") + "'" for p in paths)
+        script = (f"$d={deadline}\n"
+                  "while(($r=$d-[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -gt 0)"
+                  "{Start-Sleep -Seconds ([Math]::Min($r,60))}\n"
+                  f"foreach($p in @({quoted})){{Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue}}")
+        exe = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                           r"System32\WindowsPowerShell\v1.0\powershell.exe")
+        encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+        return [exe, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encoded]
+    script = ('d=$1; shift; while r=$((d - $(date +%s))); [ "$r" -gt 0 ]; do '
+              '[ "$r" -gt 60 ] && r=60; sleep "$r"; done; rm -f -- "$@"')
+    return ["/bin/sh", "-c", script, "lockscreen-cleanup", str(deadline)] + list(paths)
+
+
+def schedule_cleanup(cfg, snaps):
+    """Delete this session's snapshots once they expire, even if the app is closed by then.
+    (If the PC restarts first, the next app launch cleans up by file age.)
+
+    This used to re-launch the app itself with --cleanup-at. A PyInstaller onefile exe
+    started that way shares the parent's temporary _MEI folder, so closing the app showed
+    "Failed to remove temporary directory" and leaked the folder; a plain shell process
+    avoids the exe altogether."""
+    hours = float(cfg.get("snapshot_retention_hours") or 0)
+    snaps = [p for p in snaps if os.path.exists(p)]
+    if not snaps or hours <= 0:
+        return None
+    if IS_WIN:
+        detach = dict(creationflags=0x08000000 | 0x00000200)  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
     else:
-        detach = dict(start_new_session=True, stdin=subprocess.DEVNULL,
-                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        detach = dict(start_new_session=True)
     try:
-        subprocess.Popen(cmd + ["--cleanup-at", str(time.time() + hours * 3600 + 60)],
-                         close_fds=True, cwd=APP_DIR, **detach)
+        return subprocess.Popen(cleanup_command(snaps, time.time() + hours * 3600),
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, close_fds=True, cwd=CAPTURE_DIR,
+                                env=_clean_env(), **detach)
     except Exception:
-        pass
+        return None
 
 
-def run_cleanup_at(deadline):
-    while time.time() < deadline:
-        time.sleep(min(600, max(1, deadline - time.time())))
-    cleanup_expired(load_config())
+def _clean_env():
+    """Environment without PyInstaller's bootloader variables, so no child mistakes itself
+    for part of this onefile app."""
+    env = {k: v for k, v in os.environ.items()
+           if not (k.startswith("_PYI_") or k.startswith("_MEI") or k == "LD_LIBRARY_PATH")}
+    if os.environ.get("LD_LIBRARY_PATH_ORIG"):  # set by the Linux bootloader
+        env["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH_ORIG"]
+    return env
 
 
 def fmt_duration(sec):
@@ -602,16 +659,140 @@ class TkInputMonitor(InputReporter):
 
 # ---------------------------------------------------------------- settings window
 
+# same family as the lock screen: navy header, white cards on a light page
+PAGE, CARD, LINE, INK, MUTED, NAVY, NAVY_HOVER, NAVY_DIM, TOGGLE_ON, TOGGLE_OFF, DANGER = (
+    "#f3f5f8", "#ffffff", "#e2e6eb", "#14202e", "#5f6b7a", "#0e2a47", "#1a3d63", "#a9bdd3",
+    "#2563a8", "#c3cad3", "#b42318")
+
+
+class Toggle(tk.Canvas):
+    """A small on/off switch bound to a BooleanVar."""
+
+    def __init__(self, parent, var, s, enabled=True):
+        self.w, self.h = int(38 * s), int(22 * s)
+        super().__init__(parent, width=self.w, height=self.h, bg=parent["bg"], highlightthickness=0,
+                         cursor="hand2" if enabled else "")
+        self.var, self.enabled = var, enabled
+        self.bind("<Button-1>", self.flip)
+        self._trace = var.trace_add("write", lambda *a: self.draw())
+        self.bind("<Destroy>", lambda e: self._untrace())
+        self.draw()
+
+    def _untrace(self):
+        try:
+            self.var.trace_remove("write", self._trace)
+        except tk.TclError:
+            pass
+
+    def flip(self, e=None):
+        if self.enabled:
+            self.var.set(not self.var.get())
+
+    def draw(self):
+        self.delete("all")
+        on, w, h = bool(self.var.get()), self.w, self.h
+        fill = (TOGGLE_ON if on else TOGGLE_OFF) if self.enabled else LINE
+        self.create_oval(0, 0, h, h, fill=fill, width=0)
+        self.create_oval(w - h, 0, w, h, fill=fill, width=0)
+        self.create_rectangle(h / 2, 0, w - h / 2, h, fill=fill, width=0)
+        p = max(2, h // 8)
+        x = w - h + p if on else p
+        self.create_oval(x, p, x + h - 2 * p, h - p, fill="#ffffff", width=0)
+
+
 class SettingsWindow:
     def __init__(self, root, cfg, on_start):
         self.root, self.cfg, self.on_start = root, cfg, on_start
+        self.change_pwd = not cfg["pwd_hash"]
+        self.show_text = False
+        self.show_more = False
         root.resizable(False, False)
+        root.configure(bg=PAGE)
         try:
             ttk.Style().theme_use("vista" if IS_WIN else "clam")
         except tk.TclError:
             pass
+        self.s = root.winfo_fpixels("1i") / 96  # Tk pixels per 96-dpi pixel
         self.build()
+        root.update_idletasks()
+        root.geometry(f"+{(root.winfo_screenwidth() - root.winfo_reqwidth()) // 2}"
+                      f"+{max(0, (root.winfo_screenheight() - root.winfo_reqheight()) // 2 - self.px(40))}")
 
+    # --- small building blocks
+    def font(self, size, weight="normal"):
+        return (TEXT_FONT, size, weight)
+
+    def label(self, parent, text, size=10, fg=INK, weight="normal", **kw):
+        return tk.Label(parent, text=text, bg=parent["bg"], fg=fg, font=self.font(size, weight),
+                        anchor="w", justify="left", **kw)
+
+    def link(self, parent, text, command, fg=TOGGLE_ON):
+        lbl = self.label(parent, text, fg=fg, cursor="hand2")
+        lbl.bind("<Button-1>", lambda e: command())
+        return lbl
+
+    def card(self, title=None):
+        outer = tk.Frame(self.body, bg=LINE)
+        outer.pack(fill="x", pady=(0, self.px(12)))
+        inner = tk.Frame(outer, bg=CARD, padx=self.px(18), pady=self.px(14))
+        inner.pack(fill="both", padx=1, pady=1)
+        if title:
+            self.label(inner, title, 11, weight="bold").pack(fill="x", pady=(0, self.px(8)))
+        return inner
+
+    def px(self, n):
+        return int(n * self.s)
+
+    def entry(self, parent, var, show=None, width=40):
+        e = tk.Entry(parent, textvariable=var, show=show or "", width=width, font=self.font(11),
+                     bg=CARD, fg=INK, insertbackground=INK, relief="flat", highlightthickness=1,
+                     highlightbackground="#c9d0d8", highlightcolor=TOGGLE_ON)
+        return e
+
+    def field(self, parent, text, var, hint="", show=None):
+        self.label(parent, text, 10, MUTED).pack(fill="x", pady=(self.px(6), self.px(3)))
+        e = self.entry(parent, var, show)
+        e.pack(fill="x", ipady=self.px(5))
+        if hint:
+            self.label(parent, hint, 9, MUTED).pack(fill="x", pady=(self.px(3), 0))
+        return e
+
+    def switch(self, parent, text, var, enabled=True, hint=""):
+        row = tk.Frame(parent, bg=parent["bg"])
+        row.pack(fill="x", pady=self.px(5))
+        t = Toggle(row, var, self.s, enabled)
+        t.pack(side="left", anchor="n", pady=(self.px(1), 0))
+        col = tk.Frame(row, bg=row["bg"])
+        col.pack(side="left", fill="x", expand=True, padx=(self.px(12), 0))
+        lbl = self.label(col, text, 10, INK if enabled else MUTED)
+        lbl.pack(fill="x")
+        if enabled:
+            lbl.configure(cursor="hand2")
+            lbl.bind("<Button-1>", t.flip)
+        if hint:
+            self.label(col, hint, 9, DANGER if not enabled else MUTED,
+                       wraplength=self.px(400)).pack(fill="x")
+        return row
+
+    def number(self, parent, text, hint, var, lo, hi, step):
+        row = tk.Frame(parent, bg=parent["bg"])
+        row.pack(fill="x", pady=self.px(5))
+        col = tk.Frame(row, bg=row["bg"])
+        col.pack(side="left", fill="x", expand=True)
+        self.label(col, text, 10).pack(fill="x")
+        self.label(col, hint, 9, MUTED, wraplength=self.px(330)).pack(fill="x")
+        tk.Spinbox(row, from_=lo, to=hi, increment=step, textvariable=var, width=7, font=self.font(11),
+                   relief="flat", bg=CARD, fg=INK, buttonbackground=PAGE, highlightthickness=1,
+                   highlightbackground="#c9d0d8", highlightcolor=TOGGLE_ON,
+                   justify="right").pack(side="right", anchor="n", ipady=self.px(3))
+
+    def expander(self, parent, text, opened, on_toggle):
+        lbl = self.link(parent, ("▾  " if opened else "▸  ") + text, on_toggle, fg=INK)
+        lbl.configure(font=self.font(10, "bold"))
+        lbl.pack(fill="x", pady=(self.px(4), 0))
+        return lbl
+
+    # --- the window
     def build(self):
         global _lang
         cfg, root = self.cfg, self.root
@@ -620,110 +801,205 @@ class SettingsWindow:
         for child in root.winfo_children():
             child.destroy()
 
-        f = ttk.Frame(root, padding=18)
-        f.grid(sticky="nsew")
-        r = 0
+        self._make_vars()
 
-        def section(text):
-            nonlocal r
-            ttk.Label(f, text=text, font=(UI_FONT, 11, "bold")).grid(
-                row=r, column=0, columnspan=3, sticky="w", pady=(12 if r else 0, 4))
-            r += 1
+        # header: name, one-line purpose, language
+        head = tk.Frame(root, bg=NAVY, padx=self.px(22), pady=self.px(16))
+        head.pack(fill="x")
+        langs = tk.Frame(head, bg=NAVY)
+        langs.pack(side="right", anchor="n")
+        for code, name in LANG_NAMES.items():
+            on = code == _lang
+            l = tk.Label(langs, text=name, bg=NAVY, fg="#ffffff" if on else NAVY_DIM,
+                         font=self.font(10, "bold" if on else "normal"), cursor="" if on else "hand2",
+                         padx=self.px(6))
+            l.pack(side="left")
+            if not on:
+                l.bind("<Button-1>", lambda e, c=code: self.switch_language(c))
+        tk.Label(head, text="Computing Lock Screen", bg=NAVY, fg="#ffffff",
+                 font=(DISPLAY_FONT, 16, "bold"), anchor="w").pack(fill="x")
+        tk.Label(head, text=T("app_sub"), bg=NAVY, fg=NAVY_DIM, font=self.font(10),
+                 anchor="w").pack(fill="x", pady=(self.px(2), 0))
 
-        def row(label, widget, hint=""):
-            nonlocal r
-            ttk.Label(f, text=label).grid(row=r, column=0, sticky="w", padx=(0, 10), pady=3)
-            widget.grid(row=r, column=1, sticky="we", pady=3)
-            if hint:
-                ttk.Label(f, text=hint, foreground="#888").grid(row=r, column=2, sticky="w", padx=8)
-            r += 1
+        # footer
+        foot = tk.Frame(root, bg=CARD, padx=self.px(20), pady=self.px(14))
+        foot.pack(fill="x", side="bottom")
+        tk.Frame(root, bg=LINE, height=1).pack(fill="x", side="bottom")
+        lock = tk.Label(foot, text=T("lock"), bg=NAVY, fg="#ffffff", font=self.font(11, "bold"),
+                        padx=self.px(22), pady=self.px(8), cursor="hand2")
+        lock.pack(side="right")
+        lock.bind("<Button-1>", lambda e: self.start())
+        lock.bind("<Enter>", lambda e: lock.configure(bg=NAVY_HOVER))
+        lock.bind("<Leave>", lambda e: lock.configure(bg=NAVY))
+        quit_ = tk.Label(foot, text=T("quit"), bg=CARD, fg=MUTED, font=self.font(11),
+                         padx=self.px(14), pady=self.px(8), cursor="hand2")
+        quit_.pack(side="right", padx=(0, self.px(6)))
+        quit_.bind("<Button-1>", lambda e: root.destroy())
+        self.label(foot, T("enter_hint"), 9, MUTED).pack(side="left")
+        root.bind("<Return>", lambda e: self.start())
 
-        def check(text, var, enabled=True):
-            nonlocal r
-            w = ttk.Checkbutton(f, text=text, variable=var)
-            w.grid(row=r, column=0, columnspan=2, sticky="w"); r += 1
-            if not enabled:
-                w.state(["disabled"]); var.set(False)
+        # the cards scroll when they do not fit the screen; header and footer stay put
+        area = tk.Frame(root, bg=PAGE)
+        area.pack(fill="both", expand=True)
+        self.scroll = tk.Canvas(area, bg=PAGE, highlightthickness=0)
+        self.scroll.pack(side="left", fill="both", expand=True)
+        self.bar = ttk.Scrollbar(area, orient="vertical", command=self.scroll.yview)
+        self.scroll.configure(yscrollcommand=self.bar.set)
+        self.body = tk.Frame(self.scroll, bg=PAGE, padx=self.px(20), pady=self.px(16))
+        self.scroll.create_window(0, 0, window=self.body, anchor="nw")
+        root.bind_all("<MouseWheel>", lambda e: self._wheel(-1 if e.delta > 0 else 1))
+        root.bind_all("<Button-4>", lambda e: self._wheel(-1))
+        root.bind_all("<Button-5>", lambda e: self._wheel(1))
+        tk.Frame(self.body, bg=PAGE, width=self.px(500), height=0).pack()  # fixes the width
 
-        # display text
-        section(T("sec_text"))
-        self.v_lang = tk.StringVar(value=LANG_NAMES[_lang])
-        lang_box = ttk.Combobox(f, textvariable=self.v_lang, values=list(LANG_NAMES.values()),
-                                state="readonly", width=12)
-        lang_box.bind("<<ComboboxSelected>>", lambda e: self.switch_language())
-        row(T("language"), lang_box)
+        # 1. what passers-by read
+        c = self.card(T("sec_text"))
+        self.field(c, T("note"), self.v_note, T("note_hint"))
+        self.expander(c, T("edit_text"), self.show_text, self._toggle_text)
+        if self.show_text:
+            self.field(c, T("title"), self.v_title)
+            self.field(c, T("subtitle_lbl"), self.v_sub)
+
+        # 2. password
+        c = self.card(T("sec_pwd"))
+        if self.change_pwd:
+            first = self.field(c, T("pwd"), self.v_pwd, show=PWD_CHAR)
+            self.field(c, T("pwd2"), self.v_pwd2, show=PWD_CHAR)
+            if cfg["pwd_hash"]:
+                self.link(c, T("pwd_keep"), self._keep_pwd).pack(fill="x", pady=(self.px(8), 0))
+            first.focus_set()
+        else:
+            row = tk.Frame(c, bg=CARD)
+            row.pack(fill="x")
+            self.label(row, "✓  " + T("pwd_saved"), 10, INK).pack(side="left")
+            self.link(row, T("pwd_change"), self._change_pwd).pack(side="right")
+
+        # 3. detection
+        c = self.card(T("sec_detect"))
+        self.switch(c, T("kb"), self.v_kb)
+        self.switch(c, T("ms"), self.v_ms)
+        missing = ""
+        if not HAS_CV2:
+            missing = T(("cam_missing_exe" if IS_WIN else "cam_missing_bin")
+                        if getattr(sys, "frozen", False) else "cam_missing")
+        self.switch(c, T("cam_enable"), self.v_cam, HAS_CV2, missing)
+        self.cam_box = tk.Frame(c, bg=CARD)
+        self.cam_box.pack(fill="x")
+        self._camera_options()
+        if IS_WAYLAND:
+            self.label(c, T("wayland"), 9, DANGER, wraplength=self.px(440)).pack(fill="x", pady=(self.px(6), 0))
+
+        # 4. everything else, folded away
+        self.expander(self.body, T("more"), self.show_more, self._toggle_more)
+        if self.show_more:
+            c = self.card()
+            self.switch(c, T("block" if IS_WIN else "block_linux"), self.v_block)
+            self.switch(c, T("awake"), self.v_awake)
+            self.switch(c, T("display"), self.v_disp)
+            self.switch(c, T("beep"), self.v_beep)
+
+        self._fit()
+        self.scroll.yview_moveto(0)
+
+    def _fit(self):
+        """Size the scroll area to the cards, capped so the window fits on the screen."""
+        root = self.root
+        root.update_idletasks()
+        w, h = self.body.winfo_reqwidth(), self.body.winfo_reqheight()
+        chrome = root.winfo_reqheight() - self.scroll.winfo_reqheight()
+        screen_h = root.winfo_screenheight()
+        room = int(screen_h * 0.8) - chrome  # leaves space for the title bar and taskbar
+        self.scroll.configure(width=w, height=min(h, room), scrollregion=(0, 0, w, h))
+        if h > room:
+            self.bar.pack(side="right", fill="y")
+        else:
+            self.bar.pack_forget()
+            self.scroll.yview_moveto(0)
+        # keep the whole window on screen when it grows
+        root.update_idletasks()
+        bottom = int(screen_h * 0.9)
+        if root.winfo_y() + root.winfo_height() > bottom:
+            root.geometry(f"+{root.winfo_x()}+{max(0, bottom - root.winfo_height())}")
+
+    def _wheel(self, step):
+        if self.bar.winfo_ismapped():
+            self.scroll.yview_scroll(step * 3, "units")
+
+    def _make_vars(self):
+        """Fresh Tk variables from cfg (a rebuild keeps edits because collect() ran first)."""
+        cfg = self.cfg
+        old = getattr(self, "v_pwd", None)
+        self.v_pwd = tk.StringVar(value=old.get() if old else "")
+        self.v_pwd2 = tk.StringVar(value=self.v_pwd2.get() if old else "")
         self.v_title = tk.StringVar(value=cfg["title"])
         self.v_sub = tk.StringVar(value=cfg["subtitle"])
         self.v_note = tk.StringVar(value=cfg["note"])
-        row(T("title"), ttk.Entry(f, textvariable=self.v_title, width=38))
-        row(T("subtitle_lbl"), ttk.Entry(f, textvariable=self.v_sub, width=38))
-        row(T("note"), ttk.Entry(f, textvariable=self.v_note, width=38), T("note_hint"))
-
-        # password
-        section(T("sec_pwd"))
-        self.v_pwd, self.v_pwd2 = tk.StringVar(), tk.StringVar()
-        row(T("pwd"), ttk.Entry(f, textvariable=self.v_pwd, show=PWD_CHAR, width=38),
-            T("pwd_reuse") if cfg["pwd_hash"] else "")
-        row(T("pwd2"), ttk.Entry(f, textvariable=self.v_pwd2, show=PWD_CHAR, width=38))
-
-        # camera
-        section(T("sec_cam"))
-        self.v_cam = tk.BooleanVar(value=cfg["camera_enabled"])
+        self.v_cam = tk.BooleanVar(value=cfg["camera_enabled"] and HAS_CV2)
         self.v_cam_idx = tk.IntVar(value=cfg["camera_index"])
         self.v_cam_int = tk.DoubleVar(value=cfg["camera_interval"])
         self.v_cam_sens = tk.DoubleVar(value=cfg["camera_sensitivity"])
         self.v_face = tk.BooleanVar(value=cfg["camera_face"])
         self.v_snap = tk.BooleanVar(value=cfg["save_snapshots"])
-        check(T("cam_enable"), self.v_cam, HAS_CV2)
-        if not HAS_CV2:
-            missing = (("cam_missing_exe" if IS_WIN else "cam_missing_bin")
-                       if getattr(sys, "frozen", False) else "cam_missing")
-            ttk.Label(f, text=T(missing), foreground="#c33").grid(
-                row=r, column=0, columnspan=3, sticky="w"); r += 1
-        row(T("cam_index"), ttk.Spinbox(f, from_=0, to=5, textvariable=self.v_cam_idx, width=8), T("cam_index_hint"))
-        row(T("cam_int"), ttk.Spinbox(f, from_=0.5, to=600, increment=0.5,
-                                      textvariable=self.v_cam_int, width=8), T("cam_int_hint"))
-        row(T("cam_sens"), ttk.Spinbox(f, from_=0.5, to=50, increment=0.5,
-                                       textvariable=self.v_cam_sens, width=8), T("cam_sens_hint"))
-        check(T("cam_face"), self.v_face)
-        check(T("cam_snap"), self.v_snap)
         keep = float(cfg["snapshot_retention_hours"] or 0)
         self.v_keep = tk.DoubleVar(value=int(keep) if keep.is_integer() else keep)
-        row(T("keep_hours"), ttk.Spinbox(f, from_=0, to=720, increment=1,
-                                         textvariable=self.v_keep, width=8), T("keep_hint"))
-        snap_row = ttk.Frame(f)
-        snap_row.grid(row=r, column=0, columnspan=3, sticky="w", pady=(2, 0)); r += 1
-        self.snap_count = ttk.Label(snap_row)
-        self.snap_count.pack(side="left")
-        ttk.Button(snap_row, text=T("open_snaps"), command=self.open_snapshots).pack(side="left", padx=(10, 0))
-        ttk.Button(snap_row, text=T("delete_all"), command=self.delete_all).pack(side="left", padx=(6, 0))
-        self.refresh_snap_count()
-
-        # keyboard / mouse
-        section(T("sec_input"))
         self.v_kb = tk.BooleanVar(value=cfg["keyboard_enabled"])
         self.v_ms = tk.BooleanVar(value=cfg["mouse_enabled"])
         self.v_block = tk.BooleanVar(value=cfg["block_shortcuts"])
-        check(T("kb"), self.v_kb)
-        check(T("ms"), self.v_ms)
-        check(T("block" if IS_WIN else "block_linux"), self.v_block)
-        if IS_WAYLAND:
-            ttk.Label(f, text=T("wayland"), foreground="#c33").grid(
-                row=r, column=0, columnspan=3, sticky="w"); r += 1
-
-        # other
-        section(T("sec_other"))
         self.v_awake = tk.BooleanVar(value=cfg["keep_awake"])
         self.v_disp = tk.BooleanVar(value=cfg["keep_display_on"])
         self.v_beep = tk.BooleanVar(value=cfg["beep_on_alert"])
-        check(T("awake"), self.v_awake)
-        check(T("display"), self.v_disp)
-        check(T("beep"), self.v_beep)
+        self.v_cam.trace_add("write", lambda *a: self._camera_options())
 
-        btns = ttk.Frame(f)
-        btns.grid(row=r, column=0, columnspan=3, pady=(18, 0), sticky="e")
-        ttk.Button(btns, text=T("quit"), command=root.destroy).pack(side="right", padx=(8, 0))
-        ttk.Button(btns, text=T("lock"), command=self.start).pack(side="right")
+    def _camera_options(self):
+        """Camera settings appear only while camera detection is on."""
+        box = self.cam_box
+        for child in box.winfo_children():
+            child.destroy()
+        if not self.v_cam.get():
+            box.configure(height=1)
+            if hasattr(self, "scroll"):
+                self._fit()
+            return
+        inner = tk.Frame(box, bg=CARD, padx=self.px(14))
+        inner.pack(fill="x", pady=(self.px(2), 0))
+        tk.Frame(inner, bg=LINE, width=self.px(2)).place(x=-self.px(14), y=0, relheight=1)
+        self.number(inner, T("cam_index"), T("cam_index_hint"), self.v_cam_idx, 0, 5, 1)
+        self.number(inner, T("cam_int"), T("cam_int_hint"), self.v_cam_int, 0.5, 600, 0.5)
+        self.number(inner, T("cam_sens"), T("cam_sens_hint"), self.v_cam_sens, 0.5, 50, 0.5)
+        self.switch(inner, T("cam_face"), self.v_face)
+        self.switch(inner, T("cam_snap"), self.v_snap)
+        self.number(inner, T("keep_hours"), T("keep_hint"), self.v_keep, 0, 720, 1)
+        row = tk.Frame(inner, bg=CARD)
+        row.pack(fill="x", pady=(self.px(4), self.px(2)))
+        self.snap_count = self.label(row, "", 9, MUTED)
+        self.snap_count.pack(side="left")
+        self.link(row, T("delete_all"), self.delete_all, fg=DANGER).pack(side="right")
+        self.link(row, T("open_snaps"), self.open_snapshots).pack(side="right", padx=(0, self.px(14)))
+        self.refresh_snap_count()
+        if hasattr(self, "scroll"):
+            self._fit()
+
+    def _rebuild(self):
+        if self.collect():
+            self.build()
+
+    def _toggle_text(self):
+        self.show_text = not self.show_text
+        self._rebuild()
+
+    def _toggle_more(self):
+        self.show_more = not self.show_more
+        self._rebuild()
+
+    def _change_pwd(self):
+        self.change_pwd = True
+        self._rebuild()
+
+    def _keep_pwd(self):
+        self.change_pwd = False
+        self.v_pwd.set("")
+        self.v_pwd2.set("")
+        self._rebuild()
 
     def refresh_snap_count(self):
         self.snap_count.config(text=T("snap_count", len(list_snapshots())))
@@ -750,7 +1026,7 @@ class SettingsWindow:
             messagebox.showwarning(T("settings"), T("cam_nan"))
             return False
         self.cfg.update(
-            title=self.v_title.get().strip() or "COMPUTING",
+            title=self.v_title.get().strip() or T("title_default"),
             subtitle=self.v_sub.get().strip(),
             note=self.v_note.get().strip(),
             camera_enabled=self.v_cam.get(), camera_index=idx,
@@ -763,13 +1039,13 @@ class SettingsWindow:
         )
         return True
 
-    def switch_language(self):
-        new = next(k for k, v in LANG_NAMES.items() if v == self.v_lang.get())
+    def switch_language(self, new):
         if new == self.cfg["language"] or not self.collect():
             return
-        # swap the subtitle too if it is still the other language's default
-        if self.cfg["subtitle"] == STRINGS[self.cfg["language"]]["subtitle"]:
-            self.cfg["subtitle"] = STRINGS[new]["subtitle"]
+        # swap the title and subtitle too if they are still the other language's defaults
+        for key, default in (("title", "title_default"), ("subtitle", "subtitle")):
+            if self.cfg[key] == STRINGS[self.cfg["language"]][default]:
+                self.cfg[key] = STRINGS[new][default]
         self.cfg["language"] = new
         save_config(self.cfg)
         self.build()
@@ -787,12 +1063,28 @@ class SettingsWindow:
             cfg["pwd_salt"] = secrets.token_hex(16)
             cfg["pwd_hash"] = hash_password(p1, cfg["pwd_salt"])
         save_config(cfg)
+        self.root.unbind("<Return>")
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.root.unbind_all(seq)
         self.on_start()
 
 
 # ---------------------------------------------------------------- lock screen
 
-BG, FG, DIM, ACCENT, ALERT = "#07090d", "#e8ecf1", "#5b6573", "#35d07f", "#ff4d4f"
+# a calm, system-style notice: navy screen, plain wording, nothing that reacts playfully to poking
+BG, FG, DIM, TRACK, FIELD, FIELD_LINE, ALERT = (
+    "#0e2a47", "#ffffff", "#a9bdd3", "#24476d", "#123354", "#3a5b80", "#ffb4a8")
+
+
+def fmt_elapsed(sec):
+    m = int(sec) // 60
+    if m < 1:
+        return T("lt_min")
+    return T("h_min", m // 60, m % 60) if m >= 60 else T("min", m)
+
+
+def fmt_day(d):
+    return T("day_fmt", T("weekdays").split()[d.weekday()], d.day, T("months").split()[d.month - 1])
 
 
 class LockScreen:
@@ -803,8 +1095,9 @@ class LockScreen:
         self.counts = {"keyboard": 0, "mouse": 0, "camera": 0, "password": 0}
         self.start_time = time.time()
         self.fail_count = 0
-        self.angle = 0
+        self.bar_pos = 0.0
         self.alert_until = 0.0
+        self.msg_until = 0.0
         self.last_idle_reset = 0.0
         self.closed = False
 
@@ -837,83 +1130,123 @@ class LockScreen:
             self.camera.start()
 
         self._tick()
-        self._spin()
+        self._animate()
         self._poll_events()
         self._keep_on_top()
 
     # --- UI
     def _build_ui(self):
         w = self.win
-        # center on the primary monitor; ox, oy = its origin relative to this window
+        # lay out on the primary monitor; ox, oy = its origin relative to this window
         px, py, pw, ph = primary_monitor(w)
         vs = self.vs
         ox, oy = (px - vs[0], py - vs[1]) if vs else (0, 0)
+        s = max(0.6, ph / 1000)  # designed at 1000 px tall
 
-        center = tk.Frame(w, bg=BG)
-        center.place(x=ox + pw // 2, y=oy + ph // 2, anchor="center")
+        def sz(n):
+            return int(round(n * s))
 
-        self.canvas = tk.Canvas(center, width=120, height=120, bg=BG, highlightthickness=0)
-        self.canvas.pack(pady=(0, 20))
-        self.canvas.create_oval(10, 10, 110, 110, outline="#1c232d", width=6)
-        self.arc = self.canvas.create_arc(10, 10, 110, 110, start=0, extent=90,
-                                          style="arc", outline=ACCENT, width=6)
+        def font(family, size):
+            return (family, -sz(size))
 
-        tk.Label(center, text=self.cfg["title"], bg=BG, fg=FG, font=(UI_FONT, 64, "bold")).pack()
-        tk.Label(center, text=self.cfg["subtitle"], bg=BG, fg=ALERT,
-                 font=(UI_FONT, 22, "bold")).pack(pady=(4, 0))
-        if self.cfg["note"]:
-            tk.Label(center, text=self.cfg["note"], bg=BG, fg=DIM, font=(UI_FONT, 14)).pack(pady=(10, 0))
+        sw = vs[2] if vs else w.winfo_screenwidth()
+        sh = vs[3] if vs else w.winfo_screenheight()
+        c = self.canvas = tk.Canvas(w, width=sw, height=sh, bg=BG, highlightthickness=0)
+        c.place(x=0, y=0)
 
-        self.elapsed_lbl = tk.Label(center, text="", bg=BG, fg=DIM, font=(MONO_FONT, 16))
-        self.elapsed_lbl.pack(pady=(24, 0))
+        x = ox + max(sz(64), int(pw * 0.125))
+        text_w = min(pw - (x - ox) - sz(64), sz(1000))
 
-        mon = []
-        if self.cfg["camera_enabled"] and HAS_CV2:
-            mon.append(T("mon_cam", self.cfg["camera_interval"]))
-        if self.cfg["keyboard_enabled"]:
-            mon.append(T("mon_kb"))
-        if self.cfg["mouse_enabled"]:
-            mon.append(T("mon_ms"))
-        tk.Label(center, text=(T("monitoring") + "   ".join(mon)) if mon else "", bg=BG, fg=DIM,
-                 font=(UI_FONT, 11)).pack(pady=(6, 0))
+        def below(item, gap):
+            return c.bbox(item)[3] + sz(gap)
 
-        self.alert_lbl = tk.Label(center, text="", bg=BG, fg=ALERT, font=(UI_FONT, 14, "bold"))
-        self.alert_lbl.pack(pady=(18, 0))
+        # padlock: shackle over a body with a keyhole
+        lw = max(2, sz(4))
+        c.create_arc(x + sz(10), 0, x + sz(50), sz(40), start=0, extent=180,
+                     style="arc", outline=FG, width=lw, tags="content")
+        for sx in (x + sz(10), x + sz(50)):
+            c.create_line(sx, sz(20), sx, sz(34), fill=FG, width=lw, tags="content")
+        lock = c.create_rectangle(x, sz(34), x + sz(60), sz(76), outline=FG, width=lw, tags="content")
+        c.create_oval(x + sz(25), sz(50), x + sz(35), sz(60), fill=FG, width=0, tags="content")
 
-        # password box
-        box = tk.Frame(center, bg=BG)
-        box.pack(pady=(26, 0))
+        title = c.create_text(x - sz(3), below(lock, 52), text=self.cfg["title"], fill=FG, anchor="nw",
+                              width=pw - (x - ox) - sz(64), font=font(DISPLAY_FONT, 58), tags="content")
+        last = title
+        if self.cfg["subtitle"]:
+            last = c.create_text(x, below(title, 30), text=self.cfg["subtitle"], fill=DIM, anchor="nw",
+                                 width=text_w, font=font(TEXT_FONT, 24), tags="content")
+
+        # indeterminate progress: the job runs, there is nothing here to click
+        bar_y, bar_h = below(last, 56), max(2, sz(4))
+        self.bar_x, self.bar_w, self.seg_w = x, min(sz(760), text_w), sz(180)
+        c.create_rectangle(x, bar_y, x + self.bar_w, bar_y + bar_h, fill=TRACK, width=0, tags="content")
+        self.seg = c.create_rectangle(x, bar_y, x, bar_y + bar_h, fill=FG, width=0, tags="content")
+
+        self.status = c.create_text(x, bar_y + sz(36), text=self._status_text(), fill=FG, anchor="nw",
+                                    width=text_w, font=font(TEXT_FONT, 22), tags="content")
+
+        self.mon_text = self._monitor_text()
+        mon_y, mon_x = below(self.status, 70), x
+        if self.cfg["camera_enabled"] and HAS_CV2:  # small video-camera glyph
+            gy, gw = mon_y + sz(5), max(1, sz(2))
+            c.create_rectangle(x, gy, x + sz(17), gy + sz(13), outline=DIM, width=gw, tags="content")
+            c.create_polygon(x + sz(19), gy + sz(6), x + sz(24), gy + sz(2), x + sz(24), gy + sz(11),
+                             outline=DIM, fill="", width=gw, tags="content")
+            mon_x = x + sz(36)
+        self.mon = c.create_text(mon_x, mon_y, text=self.mon_text, fill=DIM, anchor="nw",
+                                 width=text_w - (mon_x - x), font=font(TEXT_FONT, 20), tags="content")
+
+        # center the block vertically, a little above the middle
+        _, top, _, bottom = c.bbox("content")
+        c.move("content", 0, oy + int(ph * 0.46) - (top + bottom) // 2)
+
+        # bottom row: owner sign-in on the left, date and time on the right
+        base = oy + ph - sz(64)
+        label = c.create_text(ox + sz(60), base, text=T("owner"), fill=DIM, anchor="w",
+                              font=font(TEXT_FONT, 16))
         self.pwd_var = tk.StringVar()
-        self.entry = tk.Entry(box, textvariable=self.pwd_var, show=PWD_CHAR, width=22, justify="center",
-                              font=(UI_FONT, 16), bg="#131820", fg=FG, insertbackground=FG,
-                              relief="flat", highlightthickness=1, highlightbackground="#2a3340",
-                              highlightcolor=ACCENT)
-        self.entry.pack(side="left", ipady=6)
+        self.entry = tk.Entry(w, textvariable=self.pwd_var, show=PWD_CHAR, width=18,
+                              font=font(TEXT_FONT, 17), bg=FIELD, fg=FG, insertbackground=FG,
+                              relief="flat", highlightthickness=1, highlightbackground=FIELD_LINE,
+                              highlightcolor=DIM)
         self.entry.bind("<Return>", lambda e: self.try_unlock())
-        tk.Button(box, text=T("unlock"), command=self.try_unlock, font=(UI_FONT, 12),
-                  bg="#1c2530", fg=FG, activebackground=ACCENT, relief="flat",
-                  padx=16, cursor="hand2").pack(side="left", padx=(8, 0), ipady=4)
-        self.msg_lbl = tk.Label(center, text=T("enter_pwd"), bg=BG, fg=DIM, font=(UI_FONT, 11))
-        self.msg_lbl.pack(pady=(8, 0))
-
-        self.clock_lbl = tk.Label(w, text="", bg=BG, fg=DIM, font=(MONO_FONT, 14))
-        self.clock_lbl.place(x=ox + pw - 24, y=oy + 20, anchor="ne")
-
-        self.log_lbl = tk.Label(w, text="", bg=BG, fg=DIM, justify="left", anchor="sw",
-                                font=(UI_FONT, 10))
-        self.log_lbl.place(x=ox + 24, y=oy + ph - 20, anchor="sw")
+        entry_x = c.bbox(label)[2] + sz(20)
+        c.create_window(entry_x, base, window=self.entry, anchor="w")
+        self.msg = c.create_text(entry_x + self.entry.winfo_reqwidth() + sz(16), base, text="",
+                                 fill=ALERT, anchor="w", font=font(TEXT_FONT, 16))
+        self.clock = c.create_text(ox + pw - sz(60), base + sz(20), text="", fill=FG, anchor="se",
+                                   font=font(DISPLAY_FONT, 40))
+        self.date = c.create_text(ox + pw - sz(60), base - sz(36), text="", fill=DIM, anchor="se",
+                                  font=font(TEXT_FONT, 18))
 
         self.entry.focus_force()
+
+    def _status_text(self):
+        parts = [T("running_for", fmt_elapsed(time.time() - self.start_time))]
+        if self.cfg["note"]:
+            parts.append(self.cfg["note"])
+        return "   ·   ".join(parts)
+
+    def _monitor_text(self):
+        if self.cfg["camera_enabled"] and HAS_CV2:
+            return T("mon_cam")
+        if self.cfg["keyboard_enabled"] or self.cfg["mouse_enabled"]:
+            return T("mon_input")
+        return ""
 
     # --- timers
     def _tick(self):
         if self.closed:
             return
-        self.elapsed_lbl.config(text=T("running") + fmt_duration(time.time() - self.start_time))
-        self.clock_lbl.config(text=dt.datetime.now().strftime("%Y-%m-%d  %H:%M:%S"))
-        now = time.time()
-        if now > self.alert_until and self.alert_lbl.cget("text"):
-            self.alert_lbl.config(text="")
+        c, now = self.canvas, time.time()
+        c.itemconfig(self.status, text=self._status_text())
+        d = dt.datetime.now()
+        c.itemconfig(self.clock, text=f"{d:%H:%M}")
+        c.itemconfig(self.date, text=fmt_day(d))
+        if now > self.alert_until:
+            c.itemconfig(self.mon, text=self.mon_text, fill=DIM)
+        if now > self.msg_until:
+            c.itemconfig(self.msg, text="")
         if not IS_WIN and self.cfg["keep_display_on"] and now - self.last_idle_reset > 30:
             self.last_idle_reset = now
             try:
@@ -922,12 +1255,17 @@ class LockScreen:
                 pass
         self.win.after(1000, self._tick)
 
-    def _spin(self):
+    def _animate(self):
         if self.closed:
             return
-        self.angle = (self.angle - 12) % 360
-        self.canvas.itemconfig(self.arc, start=self.angle)
-        self.win.after(50, self._spin)
+        # a segment glides along the track, about 3 s per pass
+        span = self.bar_w + self.seg_w
+        self.bar_pos = (self.bar_pos + span / 90) % span
+        left = self.bar_x + self.bar_pos - self.seg_w
+        x0, x1 = max(self.bar_x, left), min(self.bar_x + self.bar_w, left + self.seg_w)
+        _, y0, _, y1 = self.canvas.coords(self.seg)
+        self.canvas.coords(self.seg, x0, y0, max(x0, x1), y1)
+        self.win.after(33, self._animate)
 
     def _keep_on_top(self):
         if self.closed:
@@ -951,13 +1289,14 @@ class LockScreen:
                 self._add_log(kind, text)
                 if kind in self.counts:
                     self.counts[kind] += 1
-                    self._alert(text)
+                    self._alert()
         except queue.Empty:
             pass
         self.win.after(300, self._poll_events)
 
-    def _alert(self, text):
-        self.alert_lbl.config(text=T("activity") + text)
+    def _alert(self):
+        # state plainly that it was recorded; no live detail that turns poking into a game
+        self.canvas.itemconfig(self.mon, text=T("recorded", f"{dt.datetime.now():%H:%M:%S}"), fill=ALERT)
         self.alert_until = time.time() + 6
         if self.cfg["beep_on_alert"]:
             try:
@@ -971,7 +1310,6 @@ class LockScreen:
 
     def _add_log(self, kind, text):
         self.log.append(f"[{dt.datetime.now():%H:%M:%S}] {text}")
-        self.log_lbl.config(text="\n".join(self.log[-6:]))
 
     # --- unlock
     def try_unlock(self):
@@ -984,8 +1322,9 @@ class LockScreen:
         self.fail_count += 1
         self.counts["password"] += 1
         self._add_log("password", T("wrong_n", self.fail_count))
-        self._alert(T("wrong"))
-        self.msg_lbl.config(text=T("wrong"), fg=ALERT)
+        self._alert()
+        self.canvas.itemconfig(self.msg, text=T("wrong"))
+        self.msg_until = time.time() + 6
 
     def unlock(self):
         self.closed = True
@@ -994,7 +1333,8 @@ class LockScreen:
         snaps = []
         if self.camera:
             self.camera.stop()
-            snaps = self.camera.saved
+            self.camera.join(timeout=3)  # let a frame being saved land before we stamp the list
+            snaps = list(self.camera.saved)
             # retention counts from the end of the session, so stamp photos with the unlock time
             now = time.time()
             for p in snaps:
@@ -1054,9 +1394,6 @@ def show_summary(root, s):
 # ---------------------------------------------------------------- entry point
 
 def main():
-    if len(sys.argv) == 3 and sys.argv[1] == "--cleanup-at":
-        run_cleanup_at(float(sys.argv[2]))
-        return
     set_dpi_aware()
     cfg = load_config()
     cleanup_expired(cfg)  # catch anything whose background cleaner was killed by a restart

@@ -1,8 +1,8 @@
 # Computing Lock Screen
 
 A lock screen for Windows and Linux for when you step away while long jobs run (vibe coding, training, builds):
-a full-screen **"COMPUTING · DO NOT TOUCH"** display, background programs keep running, and a
-password unlocks it. Optional camera, keyboard and mouse activity detection. English / 中文.
+a calm, full-screen **"This computer is running a job"** notice that tells passers-by not to touch it
+and that activity is recorded, while background programs keep running; a password unlocks it. Optional camera, keyboard and mouse activity detection. English / 中文.
 
 ![Lock screen](docs/screenshot.png)
 
@@ -25,6 +25,8 @@ Built on Ubuntu 22.04, so it runs on distros with glibc 2.35 or newer.
 
 ## Features
 
+- Looks like a system screen, not a toy: plain instructions, a quiet progress bar, how long the job has
+  run, and a notice that activity is monitored and recorded. Touching it only shows "Activity recorded at …"
 - Custom title / subtitle / note; covers all monitors and stays on top
 - Password unlock (PBKDF2 hash stored in `config.json`); wrong attempts are logged but never lock you out
 - Camera detection: camera index, check interval (seconds), sensitivity, face detection;
@@ -41,8 +43,8 @@ Built on Ubuntu 22.04, so it runs on distros with glibc 2.35 or newer.
 - **View:** "Open snapshots folder" in the settings window or in the summary after unlocking.
 - **Delete:** "Delete all" in the settings window.
 - **Auto-delete:** 24 hours after the session ends by default ("Auto-delete after (h)"; 0 = keep forever).
-  A tiny background process deletes them on time even if the app is closed; if the PC restarts before
-  then, they are deleted the next time the app starts.
+  A small system-shell process (PowerShell on Windows, `sh` on Linux) deletes that session's snapshots on
+  time even if the app is closed; if the PC restarts before then, they are deleted the next time the app starts.
 
 ## Run from source
 
@@ -59,6 +61,7 @@ OpenCV is only loaded when camera detection is turned on.
 
 Build the exes with `build.bat` on Windows, or the Linux binaries with `sh build.sh`
 (both need `pip install pyinstaller` plus OpenCV for the camera build).
+`python -m unittest discover tests` runs the snapshot auto-delete tests;
 `python tests/smoke_test.py` opens the real lock screen for a few seconds and unlocks itself;
 the Linux workflow runs it under Xvfb and uploads the binaries as build artifacts.
 
