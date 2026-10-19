@@ -41,8 +41,8 @@ Built on Ubuntu 22.04, so it runs on distros with glibc 2.35 or newer.
 - **View:** "Open snapshots folder" in the settings window or in the summary after unlocking.
 - **Delete:** "Delete all" in the settings window.
 - **Auto-delete:** 24 hours after the session ends by default ("Auto-delete after (h)"; 0 = keep forever).
-  A tiny background process deletes them on time even if the app is closed; if the PC restarts before
-  then, they are deleted the next time the app starts.
+  A small system-shell process (PowerShell on Windows, `sh` on Linux) deletes that session's snapshots on
+  time even if the app is closed; if the PC restarts before then, they are deleted the next time the app starts.
 
 ## Run from source
 
@@ -59,6 +59,7 @@ OpenCV is only loaded when camera detection is turned on.
 
 Build the exes with `build.bat` on Windows, or the Linux binaries with `sh build.sh`
 (both need `pip install pyinstaller` plus OpenCV for the camera build).
+`python -m unittest discover tests` runs the snapshot auto-delete tests;
 `python tests/smoke_test.py` opens the real lock screen for a few seconds and unlocks itself;
 the Linux workflow runs it under Xvfb and uploads the binaries as build artifacts.
 

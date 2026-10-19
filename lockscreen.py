@@ -9,6 +9,7 @@ Linux (X11) grabs keyboard and pointer through Tk, like xscreensaver / i3lock do
 Camera detection is optional: pip install "opencv-python-headless<5"
 """
 
+import base64
 import ctypes
 import datetime as dt
 import hashlib
@@ -314,34 +315,59 @@ def cleanup_expired(cfg):
     return delete_snapshots(hours) if hours > 0 else 0
 
 
-def schedule_cleanup(cfg, snaps):
-    """Start a tiny detached process that deletes this session's snapshots when they expire,
-    even if the app is closed. (If the PC restarts first, the next app launch cleans up.)"""
-    hours = float(cfg.get("snapshot_retention_hours") or 0)
-    if not snaps or hours <= 0:
-        return
-    if getattr(sys, "frozen", False):  # packaged .exe: re-launch itself
-        cmd = [sys.executable]
-    else:
-        exe = sys.executable
-        w = os.path.join(os.path.dirname(exe), "pythonw.exe")
-        cmd = [w if os.path.exists(w) else exe, os.path.abspath(__file__)]
+def cleanup_command(paths, deadline):
+    """Command line for a small shell process that waits until `deadline` (Unix time) and then
+    deletes `paths`. It waits on the wall clock in steps of at most a minute, so a PC that
+    sleeps through the deadline still cleans up right after it wakes."""
+    deadline = int(deadline + 0.999)
     if IS_WIN:
-        detach = dict(creationflags=0x00000008 | 0x08000000)  # DETACHED_PROCESS | CREATE_NO_WINDOW
+        quoted = ",".join("'" + p.replace("'", "''") + "'" for p in paths)
+        script = (f"$d={deadline}\n"
+                  "while(($r=$d-[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -gt 0)"
+                  "{Start-Sleep -Seconds ([Math]::Min($r,60))}\n"
+                  f"foreach($p in @({quoted})){{Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue}}")
+        exe = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                           r"System32\WindowsPowerShell\v1.0\powershell.exe")
+        encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+        return [exe, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encoded]
+    script = ('d=$1; shift; while r=$((d - $(date +%s))); [ "$r" -gt 0 ]; do '
+              '[ "$r" -gt 60 ] && r=60; sleep "$r"; done; rm -f -- "$@"')
+    return ["/bin/sh", "-c", script, "lockscreen-cleanup", str(deadline)] + list(paths)
+
+
+def schedule_cleanup(cfg, snaps):
+    """Delete this session's snapshots once they expire, even if the app is closed by then.
+    (If the PC restarts first, the next app launch cleans up by file age.)
+
+    This used to re-launch the app itself with --cleanup-at. A PyInstaller onefile exe
+    started that way shares the parent's temporary _MEI folder, so closing the app showed
+    "Failed to remove temporary directory" and leaked the folder; a plain shell process
+    avoids the exe altogether."""
+    hours = float(cfg.get("snapshot_retention_hours") or 0)
+    snaps = [p for p in snaps if os.path.exists(p)]
+    if not snaps or hours <= 0:
+        return None
+    if IS_WIN:
+        detach = dict(creationflags=0x08000000 | 0x00000200)  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
     else:
-        detach = dict(start_new_session=True, stdin=subprocess.DEVNULL,
-                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        detach = dict(start_new_session=True)
     try:
-        subprocess.Popen(cmd + ["--cleanup-at", str(time.time() + hours * 3600 + 60)],
-                         close_fds=True, cwd=APP_DIR, **detach)
+        return subprocess.Popen(cleanup_command(snaps, time.time() + hours * 3600),
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, close_fds=True, cwd=CAPTURE_DIR,
+                                env=_clean_env(), **detach)
     except Exception:
-        pass
+        return None
 
 
-def run_cleanup_at(deadline):
-    while time.time() < deadline:
-        time.sleep(min(600, max(1, deadline - time.time())))
-    cleanup_expired(load_config())
+def _clean_env():
+    """Environment without PyInstaller's bootloader variables, so no child mistakes itself
+    for part of this onefile app."""
+    env = {k: v for k, v in os.environ.items()
+           if not (k.startswith("_PYI_") or k.startswith("_MEI") or k == "LD_LIBRARY_PATH")}
+    if os.environ.get("LD_LIBRARY_PATH_ORIG"):  # set by the Linux bootloader
+        env["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH_ORIG"]
+    return env
 
 
 def fmt_duration(sec):
@@ -994,7 +1020,8 @@ class LockScreen:
         snaps = []
         if self.camera:
             self.camera.stop()
-            snaps = self.camera.saved
+            self.camera.join(timeout=3)  # let a frame being saved land before we stamp the list
+            snaps = list(self.camera.saved)
             # retention counts from the end of the session, so stamp photos with the unlock time
             now = time.time()
             for p in snaps:
@@ -1054,9 +1081,6 @@ def show_summary(root, s):
 # ---------------------------------------------------------------- entry point
 
 def main():
-    if len(sys.argv) == 3 and sys.argv[1] == "--cleanup-at":
-        run_cleanup_at(float(sys.argv[2]))
-        return
     set_dpi_aware()
     cfg = load_config()
     cleanup_expired(cfg)  # catch anything whose background cleaner was killed by a restart

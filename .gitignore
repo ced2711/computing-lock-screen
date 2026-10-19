@@ -9,3 +9,6 @@ build/
 *.spec
 __pycache__/
 *.pyc
+
+# local virtualenv
+.venv/
